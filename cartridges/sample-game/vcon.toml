@@ -1,0 +1,8 @@
+id = "com.vcon.sample_game"
+name = "Sample Game"
+version = "0.1.0"
+entrypoint = "src/main.py"
+sdk_version = "1"
+assets_path = "assets"
+save_quota_mb = 16
+permissions = ["storage"]

@@ -4,6 +4,8 @@ use anyhow::Result;
 use clap::Parser;
 use vcon_engine::boot_cartridge;
 
+mod python_host;
+
 #[derive(Debug, Parser)]
 #[command(name = "vcon-runtime", about = "Virtual Console runtime host")]
 struct Args {
@@ -11,6 +13,12 @@ struct Args {
     cartridge: PathBuf,
     #[arg(long, default_value = "/tmp/vcon/saves")]
     saves_root: PathBuf,
+    #[arg(long, default_value = "vcon-sdk")]
+    sdk_root: PathBuf,
+    #[arg(long, default_value_t = 3)]
+    frames: u32,
+    #[arg(long, default_value_t = 1.0 / 60.0)]
+    dt_fixed: f64,
 }
 
 fn main() -> Result<()> {
@@ -29,12 +37,23 @@ fn main() -> Result<()> {
         report.save_namespace.quota_mb
     );
 
-    if report.lifecycle.on_boot {
-        println!("Invoking lifecycle callback: on_boot() [stub]");
-    }
+    let runtime_report = python_host::run_cartridge(
+        &report.entrypoint_path,
+        &args.cartridge,
+        &args.sdk_root,
+        args.frames,
+        args.dt_fixed,
+    )?;
 
-    if report.lifecycle.on_shutdown {
-        println!("Invoking lifecycle callback: on_shutdown() [stub]");
+    if runtime_report.on_boot_called {
+        println!("Invoked lifecycle callback: on_boot() [python]");
+    }
+    println!(
+        "Loop callbacks invoked: on_update={} on_render={}",
+        runtime_report.on_update_calls, runtime_report.on_render_calls
+    );
+    if runtime_report.on_shutdown_called {
+        println!("Invoked lifecycle callback: on_shutdown() [python]");
     }
 
     Ok(())

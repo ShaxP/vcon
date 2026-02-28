@@ -14,3 +14,4 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }
+pyo3 = { version = "0.22", features = ["auto-initialize", "abi3-py312"] }

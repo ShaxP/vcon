@@ -8,4 +8,5 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+pyo3.workspace = true
 vcon-engine = { path = "../vcon-engine" }

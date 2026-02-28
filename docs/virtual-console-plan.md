@@ -76,6 +76,48 @@ Last updated: 2026-02-28
 - `save.read(slot: str) -> dict | None`
 - `save.list_slots() -> list[str]`
 
+### Input Compatibility Plan (V1)
+
+Input backend and normalization:
+- Use a controller backend with broad gamepad support and mapping database support.
+- Normalize raw device input to the virtual console layout:
+  - sticks: `left_x`, `left_y`, `right_x`, `right_y`
+  - dpad: `up`, `down`, `left`, `right`
+  - buttons: `A`, `B`, `X`, `Y`, `L1`, `R1`, `L2`, `R2`, `Start`, `Select`
+
+Action/axis abstraction:
+- Engine converts normalized input into action/axis bindings used by SDK.
+- Deadzones and trigger thresholds are configurable with deterministic defaults.
+
+Device profile handling:
+- Support known profiles for Xbox, PlayStation, Switch Pro, and Steam Deck layouts.
+- Include fallback generic mapping and per-device override support.
+- Support hot-plug/unplug and reconnect handling.
+
+Diagnostics and validation:
+- Provide an input diagnostics cartridge that visualizes real-time button/axis states.
+- Use diagnostics cartridge in manual validation on desktop and Steam Deck profiles.
+
+### Rendering Primitives API (Initial)
+
+Location and ownership:
+- Engine implementation resides in `vcon-engine` render subsystem.
+- Public game-facing API resides in `vcon-sdk` (`vcon.graphics` module).
+- Python code submits draw commands; engine validates and executes them each frame.
+
+Initial `vcon.graphics` surface:
+- `clear(color: tuple[int, int, int, int])`
+- `line(x1: float, y1: float, x2: float, y2: float, color: tuple[int, int, int, int], thickness: float = 1.0)`
+- `rect(x: float, y: float, w: float, h: float, color: tuple[int, int, int, int], filled: bool = True, thickness: float = 1.0)`
+- `circle(x: float, y: float, r: float, color: tuple[int, int, int, int], filled: bool = True, thickness: float = 1.0)`
+- `sprite(asset_id: str, x: float, y: float, rotation: float = 0.0, scale: float = 1.0, color: tuple[int, int, int, int] = (255, 255, 255, 255))`
+- `text(value: str, x: float, y: float, size: float = 16.0, color: tuple[int, int, int, int] = (255, 255, 255, 255))`
+
+Command-buffer model:
+- Draw calls append to a per-frame command list.
+- Commands execute in submission order during `on_render(alpha)`.
+- No direct GPU/context access is exposed to cartridges.
+
 ## 6. Testing And Acceptance Criteria
 
 ### Sandbox And Safety
@@ -90,6 +132,7 @@ Last updated: 2026-02-28
 - Render tests (golden or snapshot-based frame checks).
 - Physics tests (collision correctness, stability).
 - Input mapping tests (desktop and Steam Deck profile behavior).
+- Controller compatibility tests (hot-plug, reconnect, profile mapping correctness).
 - Save system tests (slot CRUD, corruption handling, quota enforcement).
 
 ### Performance Targets
@@ -122,6 +165,8 @@ Use this section as the running history of decisions and refinements.
 - Selected Scene + Node as the official V1 gameplay architecture.
 - Chosen Box2D for built-in physics.
 - Confirmed sandbox-first policy: no network, no arbitrary pip dependencies.
+- Defined initial `vcon.graphics` rendering primitives and draw-command submission model.
+- Added V1 input compatibility plan with profile normalization and diagnostics cartridge.
 
 ## 9. Update Process For Future Changes
 

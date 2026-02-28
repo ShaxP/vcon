@@ -1,0 +1,17 @@
+[workspace]
+members = ["vcon-engine", "vcon-runtime", "vcon-pack"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["vcon team"]
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+pyo3 = { version = "0.22", features = ["auto-initialize", "abi3-py312"] }

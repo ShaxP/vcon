@@ -106,10 +106,16 @@ Executable host for running cartridges.
   - Maps parsed state through engine input profiles.
 
 ### `vcon-pack`
-Validation CLI for cartridge foundation checks.
+Packaging and validation CLI for cartridge distribution checks.
 
 - [main.rs](/Users/shahram/source/repos/codex/vcon/vcon-pack/src/main.rs)
-  - `validate` command checks manifest + permissions + entrypoint file presence.
+  - `build` command emits deterministic `.vcon` bundles with a format version marker.
+  - `validate` command accepts either a cartridge directory or `.vcon` bundle and checks:
+    - manifest + sdk compatibility
+    - permission policy
+    - disallowed dependency files
+    - disallowed import roots across Python sources
+    - entrypoint/assets presence
 
 ### `vcon-sdk`
 Shipped Milestone 2 API surface for cartridges.
@@ -186,6 +192,12 @@ Current output includes lifecycle invocation and update/render call counts.
 Command:
 ```bash
 cargo run -p vcon-pack -- validate --cartridge cartridges/sample-game
+```
+
+### `vcon-pack build`
+Command:
+```bash
+cargo run -p vcon-pack -- build --cartridge cartridges/sample-game --output /tmp/sample.vcon
 ```
 
 ## Test Coverage

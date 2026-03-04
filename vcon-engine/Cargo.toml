@@ -9,3 +9,4 @@ authors.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+font8x8 = "0.3"

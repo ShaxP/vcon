@@ -46,6 +46,9 @@ fn main() -> Result<()> {
     println!("Entrypoint: {}", report.entrypoint_path.display());
     println!("Lifecycle availability:");
     println!("  on_boot: {}", report.lifecycle.on_boot);
+    println!("  on_update: {}", report.lifecycle.on_update);
+    println!("  on_render: {}", report.lifecycle.on_render);
+    println!("  on_event: {}", report.lifecycle.on_event);
     println!("  on_shutdown: {}", report.lifecycle.on_shutdown);
     println!("Save namespace: {}", report.save_namespace.root.display());
     println!(
@@ -84,6 +87,10 @@ fn main() -> Result<()> {
     println!(
         "Loop callbacks invoked: on_update={} on_render={}",
         runtime_report.on_update_calls, runtime_report.on_render_calls
+    );
+    println!(
+        "Event callbacks invoked: on_event={} (physics events: {})",
+        runtime_report.on_event_calls, runtime_report.physics_events_dispatched
     );
     println!(
         "Draw commands submitted: {}",

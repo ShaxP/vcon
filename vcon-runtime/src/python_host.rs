@@ -1,12 +1,14 @@
 use std::fs;
 use std::path::Path;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{anyhow, Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use vcon_engine::{
-    scripted_input_frame, AssetStore, DrawCommand, FrameCommandBuffer, InputFrame, RenderStats,
+    scripted_input_frame, AssetStore, DrawCommand, FrameCommandBuffer, InputFrame, NodeId,
+    PhysicsBody2D, PhysicsBodyKind, PhysicsVec2, PhysicsWorld, RenderStats, SceneGraph,
     SoftwareFrame,
 };
 
@@ -53,6 +55,8 @@ pub struct RuntimeInvocationReport {
     pub on_boot_called: bool,
     pub on_update_calls: u32,
     pub on_render_calls: u32,
+    pub on_event_calls: u32,
+    pub physics_events_dispatched: u32,
     pub draw_commands_submitted: u32,
     pub draw_commands_rendered: u32,
     pub draw_commands_unsupported: u32,
@@ -77,6 +81,32 @@ impl InputProvider for ScriptedInputProvider {
     fn next_frame(&mut self, frame_idx: u32) -> InputFrame {
         scripted_input_frame(frame_idx)
     }
+}
+
+#[derive(Debug, Clone)]
+struct PhysicsBodySpec {
+    name: String,
+    x: f64,
+    y: f64,
+    velocity_x: f64,
+    velocity_y: f64,
+    radius: f64,
+    dynamic: bool,
+    restitution: f64,
+}
+
+#[derive(Debug, Clone)]
+struct PhysicsSyncInput {
+    gravity: PhysicsVec2,
+    bodies: Vec<PhysicsBodySpec>,
+}
+
+#[derive(Debug, Default)]
+struct RuntimePhysics {
+    scene: SceneGraph,
+    world: PhysicsWorld,
+    names_to_nodes: HashMap<String, NodeId>,
+    nodes_to_names: HashMap<NodeId, String>,
 }
 
 pub fn run_cartridge(
@@ -110,6 +140,7 @@ pub fn run_cartridge(
         extend_sys_path(py, cartridge_root, sdk_root)?;
         install_runtime_guards(py)?;
         configure_save_api(py, save_root, save_quota_mb)?;
+        configure_physics_api(py)?;
 
         let module_name = format!(
             "cartridge_entry_{}",
@@ -127,9 +158,12 @@ pub fn run_cartridge(
 
         let mut on_update_calls = 0;
         let mut on_render_calls = 0;
+        let mut on_event_calls = 0;
+        let mut physics_events_dispatched = 0;
         let mut draw_commands_submitted = 0;
         let mut draw_commands_rendered = 0;
         let mut draw_commands_unsupported = 0;
+        let mut physics = RuntimePhysics::default();
 
         let mut surface = SoftwareFrame::new(width, height);
 
@@ -139,6 +173,17 @@ pub fn run_cartridge(
 
             if call_if_present1_f64(&module, "on_update", dt_fixed)? {
                 on_update_calls += 1;
+            }
+
+            let physics_input = read_physics_sync_state(py)?;
+            synchronize_physics(&mut physics, &physics_input)?;
+            let collisions = step_physics(&mut physics, dt_fixed);
+            publish_physics_runtime_state(py, &physics)?;
+            physics_events_dispatched += collisions.len() as u32;
+            for event in collisions {
+                if call_if_present1_event(&module, "on_event", &event)? {
+                    on_event_calls += 1;
+                }
             }
 
             begin_render_frame(py)?;
@@ -163,6 +208,8 @@ pub fn run_cartridge(
             on_boot_called,
             on_update_calls,
             on_render_calls,
+            on_event_calls,
+            physics_events_dispatched,
             draw_commands_submitted,
             draw_commands_rendered,
             draw_commands_unsupported,
@@ -181,6 +228,230 @@ fn configure_save_api(py: Python<'_>, save_root: &Path, quota_mb: u32) -> Result
         .call1((save_root.to_string_lossy().to_string(), quota_mb))
         .context("vcon.save._set_runtime_state() failed")?;
     Ok(())
+}
+
+fn configure_physics_api(py: Python<'_>) -> Result<()> {
+    let physics_mod = py
+        .import_bound("vcon.physics")
+        .context("failed to import vcon.physics")?;
+    physics_mod
+        .getattr("_set_runtime_state")
+        .context("vcon.physics._set_runtime_state not found")?
+        .call1(((0.0_f64, 0.0_f64), Vec::<&str>::new()))
+        .context("vcon.physics._set_runtime_state() failed")?;
+    Ok(())
+}
+
+fn read_physics_sync_state(py: Python<'_>) -> Result<PhysicsSyncInput> {
+    let physics_mod = py
+        .import_bound("vcon.physics")
+        .context("failed to import vcon.physics")?;
+    let exported = physics_mod
+        .getattr("_export_runtime_state")
+        .context("vcon.physics._export_runtime_state not found")?
+        .call0()
+        .context("vcon.physics._export_runtime_state() failed")?;
+    let dict = exported
+        .downcast_into::<PyDict>()
+        .map_err(|_| anyhow!("vcon.physics._export_runtime_state() must return dict"))?;
+
+    let gravity = dict
+        .get_item("gravity")
+        .context("gravity lookup failed")?
+        .ok_or_else(|| anyhow!("physics state missing `gravity`"))?
+        .extract::<(f64, f64)>()
+        .map_err(|_| anyhow!("physics `gravity` must be (x, y) numbers"))?;
+
+    let bodies = dict
+        .get_item("bodies")
+        .context("bodies lookup failed")?
+        .ok_or_else(|| anyhow!("physics state missing `bodies`"))?
+        .downcast_into::<PyList>()
+        .map_err(|_| anyhow!("physics `bodies` must be list"))?;
+
+    let mut out = Vec::new();
+    for item in bodies.iter() {
+        let body = item
+            .downcast_into::<PyDict>()
+            .map_err(|_| anyhow!("physics body entry must be dict"))?;
+        out.push(PhysicsBodySpec {
+            name: body
+                .get_item("name")
+                .context("physics body name lookup failed")?
+                .ok_or_else(|| anyhow!("physics body missing `name`"))?
+                .extract::<String>()
+                .map_err(|_| anyhow!("physics body `name` must be string"))?,
+            x: body
+                .get_item("x")
+                .context("physics body x lookup failed")?
+                .ok_or_else(|| anyhow!("physics body missing `x`"))?
+                .extract::<f64>()
+                .map_err(|_| anyhow!("physics body `x` must be number"))?,
+            y: body
+                .get_item("y")
+                .context("physics body y lookup failed")?
+                .ok_or_else(|| anyhow!("physics body missing `y`"))?
+                .extract::<f64>()
+                .map_err(|_| anyhow!("physics body `y` must be number"))?,
+            velocity_x: body
+                .get_item("vx")
+                .context("physics body vx lookup failed")?
+                .ok_or_else(|| anyhow!("physics body missing `vx`"))?
+                .extract::<f64>()
+                .map_err(|_| anyhow!("physics body `vx` must be number"))?,
+            velocity_y: body
+                .get_item("vy")
+                .context("physics body vy lookup failed")?
+                .ok_or_else(|| anyhow!("physics body missing `vy`"))?
+                .extract::<f64>()
+                .map_err(|_| anyhow!("physics body `vy` must be number"))?,
+            radius: body
+                .get_item("radius")
+                .context("physics body radius lookup failed")?
+                .ok_or_else(|| anyhow!("physics body missing `radius`"))?
+                .extract::<f64>()
+                .map_err(|_| anyhow!("physics body `radius` must be number"))?,
+            dynamic: body
+                .get_item("dynamic")
+                .context("physics body dynamic lookup failed")?
+                .ok_or_else(|| anyhow!("physics body missing `dynamic`"))?
+                .extract::<bool>()
+                .map_err(|_| anyhow!("physics body `dynamic` must be bool"))?,
+            restitution: body
+                .get_item("restitution")
+                .context("physics body restitution lookup failed")?
+                .ok_or_else(|| anyhow!("physics body missing `restitution`"))?
+                .extract::<f64>()
+                .map_err(|_| anyhow!("physics body `restitution` must be number"))?,
+        });
+    }
+
+    Ok(PhysicsSyncInput {
+        gravity: PhysicsVec2::new(gravity.0, gravity.1),
+        bodies: out,
+    })
+}
+
+fn synchronize_physics(state: &mut RuntimePhysics, input: &PhysicsSyncInput) -> Result<()> {
+    state.world.set_gravity(input.gravity);
+
+    let mut seen_names = HashMap::new();
+    for body in &input.bodies {
+        let node = if let Some(node_id) = state.names_to_nodes.get(&body.name).copied() {
+            node_id
+        } else {
+            let node_id = state
+                .scene
+                .add_node(state.scene.root(), format!("physics:{}", body.name))
+                .with_context(|| format!("failed to add scene node for physics body `{}`", body.name))?;
+            state.names_to_nodes.insert(body.name.clone(), node_id);
+            state.nodes_to_names.insert(node_id, body.name.clone());
+            node_id
+        };
+
+        state
+            .scene
+            .set_node_transform(node, body.x, body.y, 0.0, 1.0, 1.0)
+            .with_context(|| format!("failed to set transform for physics body `{}`", body.name))?;
+        state
+            .scene
+            .set_physics_body(
+                node,
+                PhysicsBody2D {
+                    kind: if body.dynamic {
+                        PhysicsBodyKind::Dynamic
+                    } else {
+                        PhysicsBodyKind::Static
+                    },
+                    radius: body.radius,
+                    velocity_x: body.velocity_x,
+                    velocity_y: body.velocity_y,
+                    restitution: body.restitution,
+                },
+            )
+            .with_context(|| format!("failed to set body for physics body `{}`", body.name))?;
+
+        seen_names.insert(body.name.clone(), node);
+    }
+
+    let stale = state
+        .names_to_nodes
+        .iter()
+        .filter_map(|(name, node)| {
+            if seen_names.contains_key(name) {
+                None
+            } else {
+                Some((name.clone(), *node))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    for (name, node) in stale {
+        state.names_to_nodes.remove(&name);
+        state.nodes_to_names.remove(&node);
+        let _ = state.scene.clear_physics_body(node);
+    }
+
+    state.world.sync_from_scene(&state.scene);
+    Ok(())
+}
+
+fn step_physics(state: &mut RuntimePhysics, dt_fixed: f64) -> Vec<PyPhysicsEvent> {
+    let events = state.world.step(dt_fixed);
+    state.world.apply_to_scene(&mut state.scene);
+
+    events
+        .into_iter()
+        .filter_map(|event| {
+            let a = state.nodes_to_names.get(&event.a)?.clone();
+            let b = state.nodes_to_names.get(&event.b)?.clone();
+            Some(PyPhysicsEvent { a, b })
+        })
+        .collect()
+}
+
+fn publish_physics_runtime_state(py: Python<'_>, state: &RuntimePhysics) -> Result<()> {
+    let physics_mod = py
+        .import_bound("vcon.physics")
+        .context("failed to import vcon.physics")?;
+
+    let bodies = PyList::empty_bound(py);
+    for node in state.scene.nodes() {
+        let Some(body) = node.physics_body.as_ref() else {
+            continue;
+        };
+        let Some(name) = state.nodes_to_names.get(&node.id) else {
+            continue;
+        };
+        let item = PyDict::new_bound(py);
+        item.set_item("name", name)
+            .context("set physics body name failed")?;
+        item.set_item("x", node.transform.x)
+            .context("set physics body x failed")?;
+        item.set_item("y", node.transform.y)
+            .context("set physics body y failed")?;
+        item.set_item("vx", body.velocity_x)
+            .context("set physics body vx failed")?;
+        item.set_item("vy", body.velocity_y)
+            .context("set physics body vy failed")?;
+        item.set_item("radius", body.radius)
+            .context("set physics body radius failed")?;
+        bodies.append(item).context("append physics body failed")?;
+    }
+
+    let gravity = state.world.gravity();
+    physics_mod
+        .getattr("_set_runtime_state")
+        .context("vcon.physics._set_runtime_state not found")?
+        .call1(((gravity.x, gravity.y), bodies))
+        .context("vcon.physics._set_runtime_state() failed")?;
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct PyPhysicsEvent {
+    a: String,
+    b: String,
 }
 
 fn inject_input_state(py: Python<'_>, frame: &InputFrame) -> Result<()> {
@@ -360,6 +631,35 @@ fn call_if_present1_f64(module: &Bound<'_, PyModule>, callback: &str, value: f64
     Ok(false)
 }
 
+fn call_if_present1_event(
+    module: &Bound<'_, PyModule>,
+    callback: &str,
+    event: &PyPhysicsEvent,
+) -> Result<bool> {
+    if let Ok(function) = module.getattr(callback) {
+        if function.is_callable() {
+            let py = module.py();
+            let payload = PyDict::new_bound(py);
+            payload
+                .set_item("type", "physics.collision")
+                .context("failed to set event type")?;
+            payload
+                .set_item("a", event.a.as_str())
+                .context("failed to set event a")?;
+            payload
+                .set_item("b", event.b.as_str())
+                .context("failed to set event b")?;
+
+            function
+                .call1((payload,))
+                .with_context(|| format!("lifecycle callback `{callback}(event)` failed"))?;
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 fn install_runtime_guards(py: Python<'_>) -> Result<()> {
     PyModule::from_code_bound(py, SANDBOX_GUARD, "_vcon_runtime_guard.py", "_vcon_runtime_guard")
         .context("failed to install runtime sandbox guard")?;
@@ -433,6 +733,8 @@ mod tests {
         assert!(report.on_shutdown_called);
         assert_eq!(report.on_update_calls, 4);
         assert_eq!(report.on_render_calls, 4);
+        assert_eq!(report.on_event_calls, 0);
+        assert_eq!(report.physics_events_dispatched, 0);
         assert_eq!(report.draw_commands_submitted, 24);
         assert_eq!(report.draw_commands_rendered, 24);
         assert_eq!(report.draw_commands_unsupported, 0);

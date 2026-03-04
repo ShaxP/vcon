@@ -1,8 +1,9 @@
 # Virtual Console V1 Execution Plan
 
-Status: Proposed  
+Status: In progress (Milestone 1 complete; Milestone 2 implemented with scoped gaps)  
 Derived from: `docs/virtual-console-plan.md`  
-Created: 2026-02-28
+Created: 2026-02-28  
+Last updated: 2026-03-04
 
 ## 1. Delivery Approach
 
@@ -11,6 +12,15 @@ Created: 2026-02-28
 - Keep runtime determinism and sandbox restrictions as non-negotiable quality bars throughout development.
 
 ## 2. Milestone Plan
+
+### Current Progress Snapshot (2026-03-04)
+
+- Milestone 1: complete and test-backed.
+- Milestone 2: implemented for deterministic loop wiring, render command pipeline, input API baseline, save primitives, diagnostics cartridge, and audio scaffolding.
+- Milestone 2 remaining gaps:
+  - planned `moderngl` windowed backend not yet integrated
+  - controller mapping scope is currently `move_x`, `move_y`, `A`, `Start`
+  - no real hot-plug/reconnect backend semantics yet
 
 ### Milestone 1: Foundation
 

@@ -35,6 +35,7 @@ fn validate_cartridge(cartridge_dir: &PathBuf) -> Result<()> {
         .map_err(|err| anyhow!("failed reading {}: {err}", manifest_path.display()))?;
 
     let manifest = Manifest::parse(&source)?;
+    manifest.validate_sdk_version_compatibility()?;
     let permission_violations = validate_manifest_permissions(&manifest);
     if !permission_violations.is_empty() {
         let msg = permission_violations

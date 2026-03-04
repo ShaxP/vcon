@@ -14,6 +14,9 @@ fn boots_sample_cartridge_from_workspace() {
 
     assert_eq!(report.manifest.id, "com.vcon.sample_game");
     assert!(report.lifecycle.on_boot);
+    assert!(report.lifecycle.on_update);
+    assert!(report.lifecycle.on_render);
+    assert!(report.lifecycle.on_event);
     assert!(report.lifecycle.on_shutdown);
 }
 

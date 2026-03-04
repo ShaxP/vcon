@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+pub const SUPPORTED_SDK_VERSION: &str = "1";
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Manifest {
     pub id: String,
@@ -65,6 +67,17 @@ impl Manifest {
 
         Ok(())
     }
+
+    pub fn validate_sdk_version_compatibility(&self) -> Result<(), ManifestError> {
+        if self.sdk_version == SUPPORTED_SDK_VERSION {
+            return Ok(());
+        }
+
+        Err(ManifestError::Validation(format!(
+            "manifest key `sdk_version` must be `{SUPPORTED_SDK_VERSION}` for this runtime (got `{}`)",
+            self.sdk_version
+        )))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -128,5 +141,25 @@ permissions = ["storage"]
 
         let err = Manifest::parse(input).expect_err("invalid entrypoint should fail");
         assert!(err.to_string().contains("must point to a .py file"));
+    }
+
+    #[test]
+    fn rejects_unsupported_sdk_version() {
+        let input = r#"
+id = "com.example.demo"
+name = "Demo"
+version = "0.1.0"
+entrypoint = "src/main.py"
+sdk_version = "2"
+assets_path = "assets"
+save_quota_mb = 8
+permissions = ["storage"]
+"#;
+
+        let manifest = Manifest::parse(input).expect("manifest parses");
+        let err = manifest
+            .validate_sdk_version_compatibility()
+            .expect_err("sdk version should be gated");
+        assert!(err.to_string().contains("must be `1`"));
     }
 }

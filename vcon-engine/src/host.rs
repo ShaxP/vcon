@@ -8,6 +8,9 @@ use crate::storage::{SaveNamespace, StorageError};
 #[derive(Debug, Clone)]
 pub struct LifecycleAvailability {
     pub on_boot: bool,
+    pub on_update: bool,
+    pub on_render: bool,
+    pub on_event: bool,
     pub on_shutdown: bool,
 }
 
@@ -27,6 +30,7 @@ pub fn boot_cartridge(cartridge_dir: &Path, saves_root: &Path) -> Result<BootRep
             source,
         })?;
     let manifest = Manifest::parse(&manifest_source)?;
+    manifest.validate_sdk_version_compatibility()?;
 
     let permission_violations = validate_manifest_permissions(&manifest);
     if !permission_violations.is_empty() {
@@ -57,6 +61,9 @@ pub fn boot_cartridge(cartridge_dir: &Path, saves_root: &Path) -> Result<BootRep
 
     let lifecycle = LifecycleAvailability {
         on_boot: entrypoint_source.contains("def on_boot("),
+        on_update: entrypoint_source.contains("def on_update("),
+        on_render: entrypoint_source.contains("def on_render("),
+        on_event: entrypoint_source.contains("def on_event("),
         on_shutdown: entrypoint_source.contains("def on_shutdown("),
     };
 
@@ -99,6 +106,9 @@ mod tests {
 
         assert_eq!(report.manifest.id, "com.vcon.sample_game");
         assert!(report.lifecycle.on_boot);
+        assert!(report.lifecycle.on_update);
+        assert!(report.lifecycle.on_render);
+        assert!(report.lifecycle.on_event);
         assert!(report.lifecycle.on_shutdown);
         assert_eq!(report.save_namespace.quota_mb, 16);
     }
@@ -128,6 +138,36 @@ permissions = ["network"]
         let err = boot_cartridge(root, Path::new("/tmp/vcon-test-saves"))
             .expect_err("policy violation should fail");
         assert!(err.to_string().contains("permission `network` is blocked"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_unsupported_sdk_version() {
+        let root = Path::new("/tmp/vcon-bad-sdk-version");
+        let src_dir = root.join("src");
+        let _ = fs::remove_dir_all(root);
+        fs::create_dir_all(&src_dir).expect("create src dir");
+
+        fs::write(
+            root.join("vcon.toml"),
+            r#"id = "com.vcon.bad_sdk"
+name = "Bad SDK"
+version = "0.1.0"
+entrypoint = "src/main.py"
+sdk_version = "2"
+assets_path = "assets"
+save_quota_mb = 8
+permissions = ["storage"]
+"#,
+        )
+        .expect("write manifest");
+        fs::write(src_dir.join("main.py"), "import vcon\n").expect("write entrypoint");
+
+        let err = boot_cartridge(root, Path::new("/tmp/vcon-test-saves"))
+            .expect_err("unsupported sdk should fail");
+        assert!(err.to_string().contains("sdk_version"));
+        assert!(err.to_string().contains("must be `1`"));
 
         let _ = fs::remove_dir_all(root);
     }

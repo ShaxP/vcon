@@ -9,8 +9,9 @@ use pyo3::types::{PyDict, PyList};
 use vcon_engine::{
     scripted_input_frame_seeded, AssetStore, DrawCommand, FrameCommandBuffer, InputFrame, NodeId,
     PhysicsBody2D, PhysicsBodyKind, PhysicsVec2, PhysicsWorld, RenderStats, SceneGraph,
-    SoftwareFrame,
 };
+
+use crate::render_backend::{ActiveRenderBackend, RenderExecutor};
 
 static NEXT_MODULE_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -24,6 +25,7 @@ pub struct RuntimeInvocationReport {
     pub draw_commands_submitted: u32,
     pub draw_commands_rendered: u32,
     pub draw_commands_unsupported: u32,
+    pub render_backend: ActiveRenderBackend,
     pub on_shutdown_called: bool,
 }
 
@@ -100,6 +102,7 @@ pub fn run_cartridge(
     save_quota_mb: u32,
     asset_dir: Option<&Path>,
     dump_frame_path: Option<&Path>,
+    render_backend: ActiveRenderBackend,
 ) -> Result<RuntimeInvocationReport> {
     let source = fs::read_to_string(entrypoint_path).with_context(|| {
         format!(
@@ -143,7 +146,7 @@ pub fn run_cartridge(
         let mut draw_commands_unsupported = 0;
         let mut physics = RuntimePhysics::default();
 
-        let mut surface = SoftwareFrame::new(width, height);
+        let mut executor = RenderExecutor::new(render_backend, width, height);
 
         for frame_idx in 0..frames {
             let input_frame = input_provider.next_frame(frame_idx);
@@ -171,14 +174,13 @@ pub fn run_cartridge(
             let frame_commands = drain_and_validate_render_commands(py)?;
             draw_commands_submitted += frame_commands.commands.len() as u32;
 
-            let frame_stats: RenderStats =
-                surface.apply_with_assets(&frame_commands, assets.as_ref());
+            let frame_stats: RenderStats = executor.render_frame(&frame_commands, assets.as_ref());
             draw_commands_rendered += frame_stats.commands_executed as u32;
             draw_commands_unsupported += frame_stats.commands_unsupported as u32;
         }
 
         if let Some(path) = dump_frame_path {
-            surface.write_ppm(path)?;
+            executor.dump_ppm(path)?;
         }
 
         let on_shutdown_called = call_if_present0(&module, "on_shutdown")?;
@@ -192,6 +194,7 @@ pub fn run_cartridge(
             draw_commands_submitted,
             draw_commands_rendered,
             draw_commands_unsupported,
+            render_backend: executor.backend(),
             on_shutdown_called,
         })
     })
@@ -750,6 +753,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{run_cartridge, ScriptedInputProvider};
+    use crate::render_backend::ActiveRenderBackend;
 
     #[test]
     fn invokes_sample_lifecycle_callbacks_loop_and_draw_commands() {
@@ -774,6 +778,7 @@ mod tests {
             8,
             Some(&asset_dir),
             None,
+            ActiveRenderBackend::Software,
         )
         .expect("callbacks should execute");
 
@@ -786,6 +791,7 @@ mod tests {
         assert_eq!(report.draw_commands_submitted, 24);
         assert_eq!(report.draw_commands_rendered, 24);
         assert_eq!(report.draw_commands_unsupported, 0);
+        assert_eq!(report.render_backend, ActiveRenderBackend::Software);
         let _ = fs::remove_dir_all(&save_root);
     }
 
@@ -818,6 +824,7 @@ def on_boot():
             8,
             None,
             None,
+            ActiveRenderBackend::Software,
         );
         let err = result.expect_err("network import should be blocked");
         let msg = format!("{err:#}");
@@ -859,6 +866,7 @@ def on_boot():
             8,
             None,
             None,
+            ActiveRenderBackend::Software,
         );
         let err = result.expect_err("non-sdk import should be blocked");
         let msg = format!("{err:#}");
@@ -897,6 +905,7 @@ builtins.__vcon_original_import__("socket")
             8,
             None,
             None,
+            ActiveRenderBackend::Software,
         );
         let err = result.expect_err("bypass attempt should fail");
         let msg = format!("{err:#}");

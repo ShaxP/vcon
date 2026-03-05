@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use font8x8::{BASIC_FONTS, UnicodeFonts};
+use font8x8::{UnicodeFonts, BASIC_FONTS};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DrawCommand {
@@ -93,7 +93,8 @@ impl AssetStore {
         for entry in std::fs::read_dir(dir)
             .map_err(|source| AssetLoadError::ReadDir(dir.to_path_buf(), source))?
         {
-            let entry = entry.map_err(|source| AssetLoadError::ReadDir(dir.to_path_buf(), source))?;
+            let entry =
+                entry.map_err(|source| AssetLoadError::ReadDir(dir.to_path_buf(), source))?;
             let path = entry.path();
             if !path.is_file() {
                 continue;

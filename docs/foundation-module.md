@@ -1,16 +1,17 @@
 # Foundation + Core Engine Documentation
 
-Status: Implemented through Milestone 2 (with defined gaps)  
+Status: Implemented through Milestone 5 (with defined hardware/backend gaps)  
 Last updated: 2026-03-04
 
 ## Purpose
-This document captures the shipped implementation state after Milestone 2 work:
+This document captures the shipped implementation state after Milestone 5 work:
 - Milestone 1 foundation (manifest/sandbox/boot path)
 - deterministic runtime loop wiring
 - SDK-driven rendering command pipeline
 - input state injection and profile mapping baseline
 - audio mixer scaffolding
-- save slot CRUD with quota enforcement
+- deterministic packaging/validation tooling
+- hardening coverage for sandbox, render golden snapshots, frame pacing smoke checks, and save corruption recovery
 
 It replaces the earlier "foundation only" baseline.
 
@@ -31,6 +32,7 @@ Core engine logic shared by runtime and tooling.
     - blocked `network` permission
     - blocked network-related imports
     - blocked non-SDK imports
+    - blocked dynamic import patterns (`__import__`, `importlib.import_module`)
 
 - [storage.rs](/Users/shahram/source/repos/codex/vcon/vcon-engine/src/storage.rs)
   - Builds per-game save namespace using manifest `id`.
@@ -83,6 +85,7 @@ Executable host for running cartridges.
     - fixed timestep
     - surface resolution
     - input source (`none`, `scripted`, `gamepad`)
+    - scripted input seed (`--input-seed`) for replay scenarios
     - optional final frame dump path
 
 - [python_host.rs](/Users/shahram/source/repos/codex/vcon/vcon-runtime/src/python_host.rs)
@@ -139,17 +142,24 @@ Shipped Milestone 2 API surface for cartridges.
   - Validates save read/write persistence flow.
 - `cartridges/save-quota`
   - Validates quota enforcement failure behavior.
+- `cartridges/save-recovery`
+  - Validates corrupt-slot recovery and quarantine behavior.
 
-## Milestone 2 Status Snapshot
+## Milestone 5 Status Snapshot
 
 ### Completed
 - Deterministic fixed-step update loop (`dt_fixed`) with repeatable replay test.
+- Seeded deterministic replay path for scripted input (`--input-seed`) with audit tests.
 - SDK render command pipeline implemented and validated.
 - Software render backend executing draw commands in submission order.
+- Render golden snapshot checks for sample and diagnostics cartridges.
 - Input API (`axis`, `action_pressed`) available in SDK.
 - Input diagnostics cartridge added.
 - Audio mixer API scaffolding implemented.
 - Save API primitives (`write`, `read`, `list_slots`) implemented with quota checks.
+- Save corruption recovery semantics (quarantine + rewrite) with integration tests.
+- Runtime and static sandbox hardened against dynamic import bypass patterns.
+- Steam Deck-profile performance smoke budget check added.
 
 ### Partially complete
 - Render backend target exists as software rasterizer and PPM dump path.
@@ -160,8 +170,11 @@ Shipped Milestone 2 API surface for cartridges.
 - Gamepad support is file-backed and deterministic for tests.
   - Real hot-plug/reconnect backend handling is pending.
 
-### Not in Milestone 2 scope yet
-- Box2D integration and physics-facing SDK contracts (Milestone 3).
+### Remaining gaps
+- No `moderngl` windowed GPU backend yet (software rasterizer only).
+- Input/controller map is intentionally narrow in current implementation.
+- No real OS-level controller hot-plug/reconnect handling yet.
+- Audio is queue/mixer scaffolding only (no device playback backend).
 
 ## Runtime CLI
 
@@ -184,6 +197,7 @@ Key options:
 - `--dt-fixed`: fixed timestep passed to `on_update`
 - `--width`, `--height`: render surface dimensions
 - `--input-source`: `none`, `scripted`, or `gamepad`
+- `--input-seed`: deterministic seed for scripted input stream
 - `--dump-frame`: write final frame to `.ppm`
 
 Current output includes lifecycle invocation and update/render call counts.
@@ -220,6 +234,8 @@ Integration tests:
 - [runtime_smoke.rs](/Users/shahram/source/repos/codex/vcon/vcon-runtime/tests/runtime_smoke.rs)
 - [determinism_replay.rs](/Users/shahram/source/repos/codex/vcon/vcon-runtime/tests/determinism_replay.rs)
 - [input_diagnostics_smoke.rs](/Users/shahram/source/repos/codex/vcon/vcon-runtime/tests/input_diagnostics_smoke.rs)
+- [render_golden.rs](/Users/shahram/source/repos/codex/vcon/vcon-runtime/tests/render_golden.rs)
+- [performance_smoke.rs](/Users/shahram/source/repos/codex/vcon/vcon-runtime/tests/performance_smoke.rs)
 - [save_smoke.rs](/Users/shahram/source/repos/codex/vcon/vcon-runtime/tests/save_smoke.rs)
 - [validate_smoke.rs](/Users/shahram/source/repos/codex/vcon/vcon-pack/tests/validate_smoke.rs)
 
@@ -236,7 +252,6 @@ cargo test --workspace
 - Input/controller map is intentionally narrow in current implementation.
 - No real OS-level controller hot-plug/reconnect handling yet.
 - Audio is queue/mixer scaffolding only (no device playback backend).
-- Scene graph is implemented but not yet driving a runtime ECS/physics pipeline.
 
 ## Next Work (from current baseline)
 - Integrate windowed render backend and pacing checks for `1280x800 @ 60`.

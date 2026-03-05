@@ -9,6 +9,7 @@ pub enum PolicyViolation {
     BlockedPermission(String),
     NetworkImport(String),
     ImportNotAllowed(String),
+    DynamicImport(String),
 }
 
 impl std::fmt::Display for PolicyViolation {
@@ -22,6 +23,9 @@ impl std::fmt::Display for PolicyViolation {
             }
             PolicyViolation::ImportNotAllowed(module) => {
                 write!(f, "import `{module}` is outside SDK-facing APIs")
+            }
+            PolicyViolation::DynamicImport(pattern) => {
+                write!(f, "dynamic import pattern `{pattern}` is blocked in V1")
             }
         }
     }
@@ -50,6 +54,10 @@ pub fn scan_entrypoint_source(source: &str) -> Vec<PolicyViolation> {
         }
     }
 
+    for dynamic in detect_dynamic_import_patterns(source) {
+        violations.push(PolicyViolation::DynamicImport(dynamic));
+    }
+
     violations
 }
 
@@ -57,7 +65,7 @@ fn extract_import_roots(source: &str) -> Vec<String> {
     source
         .lines()
         .filter_map(|line| {
-            let trimmed = line.trim();
+            let trimmed = strip_inline_comment(line).trim();
             if let Some(rest) = trimmed.strip_prefix("import ") {
                 return Some(first_module_root(rest));
             }
@@ -68,6 +76,24 @@ fn extract_import_roots(source: &str) -> Vec<String> {
         })
         .filter(|module| !module.is_empty())
         .collect()
+}
+
+fn detect_dynamic_import_patterns(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let content = strip_inline_comment(line);
+        if content.contains("__import__(") {
+            out.push("__import__".to_owned());
+        }
+        if content.contains("importlib.import_module(") {
+            out.push("importlib.import_module".to_owned());
+        }
+    }
+    out
+}
+
+fn strip_inline_comment(line: &str) -> &str {
+    line.split('#').next().unwrap_or(line)
 }
 
 fn first_module_root(input: &str) -> String {
@@ -134,5 +160,19 @@ from vcon import input
 
         let violations = scan_entrypoint_source(source);
         assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn blocks_dynamic_import_patterns() {
+        let source = r#"
+import vcon
+module = __import__("socket")
+"#;
+
+        let violations = scan_entrypoint_source(source);
+        assert_eq!(
+            violations,
+            vec![PolicyViolation::DynamicImport("__import__".to_owned())]
+        );
     }
 }

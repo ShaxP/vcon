@@ -17,8 +17,8 @@ pub struct Manifest {
 
 impl Manifest {
     pub fn parse(input: &str) -> Result<Self, ManifestError> {
-        let manifest: Manifest = toml::from_str(input)
-            .map_err(|source| ManifestError::Parse(source.to_string()))?;
+        let manifest: Manifest =
+            toml::from_str(input).map_err(|source| ManifestError::Parse(source.to_string()))?;
         manifest.validate()?;
         Ok(manifest)
     }

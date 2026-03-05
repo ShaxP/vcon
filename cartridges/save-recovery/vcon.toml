@@ -1,0 +1,8 @@
+id = "com.vcon.save_recovery"
+name = "Save Recovery"
+version = "0.1.0"
+entrypoint = "src/main.py"
+sdk_version = "1"
+assets_path = "assets"
+save_quota_mb = 8
+permissions = ["storage"]

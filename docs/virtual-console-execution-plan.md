@@ -1,6 +1,6 @@
 # Virtual Console V1 Execution Plan
 
-Status: In progress (Milestone 1 complete; Milestone 2 implemented with scoped gaps)  
+Status: In progress (Milestones 1-5 implemented; hardware validation remains)  
 Derived from: `docs/virtual-console-plan.md`  
 Created: 2026-02-28  
 Last updated: 2026-03-04
@@ -15,9 +15,14 @@ Last updated: 2026-03-04
 
 ### Current Progress Snapshot (2026-03-04)
 
-- Milestone 1: complete and test-backed.
-- Milestone 2: implemented for deterministic loop wiring, render command pipeline, input API baseline, save primitives, diagnostics cartridge, and audio scaffolding.
-- Milestone 2 remaining gaps:
+- Milestones 1-4: implemented and test-backed.
+- Milestone 5 implemented for:
+  - determinism audits across multiple fixed-step profiles and seeded replay streams
+  - tighter runtime/static sandbox controls (including dynamic import pattern blocking)
+  - render golden snapshot checks
+  - frame pacing/performance smoke budget checks on Steam Deck profile configuration
+  - save corruption recovery semantics with quarantine behavior
+- Remaining gaps:
   - planned `moderngl` windowed backend not yet integrated
   - controller mapping scope is currently `move_x`, `move_y`, `A`, `Start`
   - no real hot-plug/reconnect backend semantics yet

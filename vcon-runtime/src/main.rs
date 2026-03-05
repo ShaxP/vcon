@@ -6,12 +6,20 @@ use vcon_engine::boot_cartridge;
 
 mod gamepad;
 mod python_host;
+mod render_backend;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum InputSourceArg {
     None,
     Scripted,
     Gamepad,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum RenderBackendArg {
+    Auto,
+    Software,
+    Moderngl,
 }
 
 #[derive(Debug, Parser)]
@@ -35,6 +43,8 @@ struct Args {
     input_source: InputSourceArg,
     #[arg(long, default_value_t = 0)]
     input_seed: u64,
+    #[arg(long, value_enum, default_value_t = RenderBackendArg::Auto)]
+    render_backend: RenderBackendArg,
     #[arg(long)]
     dump_frame: Option<PathBuf>,
 }
@@ -68,6 +78,13 @@ fn main() -> Result<()> {
         InputSourceArg::Gamepad => &mut gamepad_provider,
     };
 
+    let backend_request = match args.render_backend {
+        RenderBackendArg::Auto => render_backend::RenderBackendRequest::Auto,
+        RenderBackendArg::Software => render_backend::RenderBackendRequest::Software,
+        RenderBackendArg::Moderngl => render_backend::RenderBackendRequest::Moderngl,
+    };
+    let backend_selection = render_backend::select_render_backend(backend_request);
+
     let runtime_report = python_host::run_cartridge(
         &report.entrypoint_path,
         &args.cartridge,
@@ -81,6 +98,7 @@ fn main() -> Result<()> {
         report.save_namespace.quota_mb,
         Some(&args.cartridge.join(&report.manifest.assets_path)),
         args.dump_frame.as_deref(),
+        backend_selection.active,
     )?;
 
     if runtime_report.on_boot_called {
@@ -102,6 +120,14 @@ fn main() -> Result<()> {
         "Draw commands rendered: {} (unsupported: {})",
         runtime_report.draw_commands_rendered, runtime_report.draw_commands_unsupported
     );
+    println!(
+        "Render backend: requested={:?} active={}",
+        backend_selection.requested,
+        runtime_report.render_backend.as_str()
+    );
+    if let Some(reason) = &backend_selection.fallback_reason {
+        println!("Render backend fallback: {reason}");
+    }
     if runtime_report.on_shutdown_called {
         println!("Invoked lifecycle callback: on_shutdown() [python]");
     }

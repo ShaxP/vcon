@@ -91,7 +91,10 @@ mod tests {
         let slot = namespace
             .slot_path("slot_a")
             .expect("slot path should be created");
-        assert_eq!(slot, Path::new("/tmp/vcon/saves/com.example.demo/slot_a.json"));
+        assert_eq!(
+            slot,
+            Path::new("/tmp/vcon/saves/com.example.demo/slot_a.json")
+        );
     }
 
     #[test]

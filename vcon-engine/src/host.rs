@@ -80,13 +80,19 @@ pub fn boot_cartridge(cartridge_dir: &Path, saves_root: &Path) -> Result<BootRep
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
     #[error("failed to read manifest at {path}: {source}")]
-    ReadManifest { path: PathBuf, source: std::io::Error },
+    ReadManifest {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("manifest error: {0}")]
     Manifest(#[from] ManifestError),
     #[error("sandbox policy violation: {0}")]
     Policy(String),
     #[error("failed to read entrypoint at {path}: {source}")]
-    ReadEntrypoint { path: PathBuf, source: std::io::Error },
+    ReadEntrypoint {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("storage error: {0}")]
     Storage(#[from] StorageError),
 }

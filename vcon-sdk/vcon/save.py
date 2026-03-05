@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import time
 
 _save_root = None
 _quota_bytes = 0
@@ -64,8 +65,18 @@ def read(slot):
     path = _slot_path(slot)
     if not path.exists():
         return None
-    with path.open("rb") as f:
-        return json.loads(f.read().decode("utf-8"))
+    try:
+        with path.open("rb") as f:
+            return json.loads(f.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        # Recovery semantics: quarantine unreadable/corrupt slot data and continue.
+        stamp = int(time.time() * 1000)
+        quarantine = path.with_suffix(f".corrupt.{stamp}.json")
+        try:
+            os.replace(path, quarantine)
+        except OSError:
+            pass
+        return None
 
 
 def list_slots():

@@ -33,6 +33,8 @@ struct Args {
     height: u32,
     #[arg(long, value_enum, default_value_t = InputSourceArg::Scripted)]
     input_source: InputSourceArg,
+    #[arg(long, default_value_t = 0)]
+    input_seed: u64,
     #[arg(long)]
     dump_frame: Option<PathBuf>,
 }
@@ -42,7 +44,10 @@ fn main() -> Result<()> {
 
     let report = boot_cartridge(&args.cartridge, &args.saves_root)?;
 
-    println!("Loaded cartridge: {} ({})", report.manifest.name, report.manifest.id);
+    println!(
+        "Loaded cartridge: {} ({})",
+        report.manifest.name, report.manifest.id
+    );
     println!("Entrypoint: {}", report.entrypoint_path.display());
     println!("Lifecycle availability:");
     println!("  on_boot: {}", report.lifecycle.on_boot);
@@ -51,13 +56,10 @@ fn main() -> Result<()> {
     println!("  on_event: {}", report.lifecycle.on_event);
     println!("  on_shutdown: {}", report.lifecycle.on_shutdown);
     println!("Save namespace: {}", report.save_namespace.root.display());
-    println!(
-        "Save quota: {} MB",
-        report.save_namespace.quota_mb
-    );
+    println!("Save quota: {} MB", report.save_namespace.quota_mb);
 
     let mut none_provider = python_host::NoneInputProvider;
-    let mut scripted_provider = python_host::ScriptedInputProvider;
+    let mut scripted_provider = python_host::ScriptedInputProvider::with_seed(args.input_seed);
     let mut gamepad_provider = gamepad::GamepadInputProvider::new();
 
     let input_provider: &mut dyn python_host::InputProvider = match args.input_source {

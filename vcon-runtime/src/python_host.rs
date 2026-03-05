@@ -1,54 +1,18 @@
-use std::fs;
-use std::path::Path;
 use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{anyhow, Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use vcon_engine::{
-    scripted_input_frame, AssetStore, DrawCommand, FrameCommandBuffer, InputFrame, NodeId,
+    scripted_input_frame_seeded, AssetStore, DrawCommand, FrameCommandBuffer, InputFrame, NodeId,
     PhysicsBody2D, PhysicsBodyKind, PhysicsVec2, PhysicsWorld, RenderStats, SceneGraph,
     SoftwareFrame,
 };
 
 static NEXT_MODULE_ID: AtomicUsize = AtomicUsize::new(0);
-
-const SANDBOX_GUARD: &str = r#"
-import builtins
-
-_ALLOWED_ROOTS = {"vcon"}
-_BLOCKED_NETWORK_ROOTS = {"socket", "urllib", "http", "requests", "asyncio"}
-if hasattr(builtins, "__vcon_original_import__"):
-    _real_import = builtins.__vcon_original_import__
-else:
-    builtins.__vcon_original_import__ = builtins.__import__
-    _real_import = builtins.__vcon_original_import__
-
-
-def _vcon_import(name, globals=None, locals=None, fromlist=(), level=0):
-    root = name.split(".", 1)[0] if name else ""
-    importer = ""
-    if globals and "__name__" in globals:
-        importer = globals["__name__"] or ""
-
-    # Restrict only cartridge-authored imports; interpreter/SDK internals pass through.
-    if not importer.startswith("cartridge_entry"):
-        return _real_import(name, globals, locals, fromlist, level)
-
-    if root in _BLOCKED_NETWORK_ROOTS:
-        raise ImportError(f"vcon sandbox: blocked network module '{root}'")
-
-    if level == 0 and root not in _ALLOWED_ROOTS:
-        raise ImportError(
-            f"vcon sandbox: import '{root}' is outside SDK-facing APIs"
-        )
-
-    return _real_import(name, globals, locals, fromlist, level)
-
-
-builtins.__import__ = _vcon_import
-"#;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeInvocationReport {
@@ -75,11 +39,25 @@ impl InputProvider for NoneInputProvider {
     }
 }
 
-pub struct ScriptedInputProvider;
+pub struct ScriptedInputProvider {
+    seed: u64,
+}
+
+impl Default for ScriptedInputProvider {
+    fn default() -> Self {
+        Self { seed: 0 }
+    }
+}
+
+impl ScriptedInputProvider {
+    pub fn with_seed(seed: u64) -> Self {
+        Self { seed }
+    }
+}
 
 impl InputProvider for ScriptedInputProvider {
     fn next_frame(&mut self, frame_idx: u32) -> InputFrame {
-        scripted_input_frame(frame_idx)
+        scripted_input_frame_seeded(self.seed, frame_idx)
     }
 }
 
@@ -138,7 +116,7 @@ pub fn run_cartridge(
 
     Python::with_gil(|py| {
         extend_sys_path(py, cartridge_root, sdk_root)?;
-        install_runtime_guards(py)?;
+        install_runtime_guards(py, cartridge_root)?;
         configure_save_api(py, save_root, save_quota_mb)?;
         configure_physics_api(py)?;
 
@@ -193,7 +171,8 @@ pub fn run_cartridge(
             let frame_commands = drain_and_validate_render_commands(py)?;
             draw_commands_submitted += frame_commands.commands.len() as u32;
 
-            let frame_stats: RenderStats = surface.apply_with_assets(&frame_commands, assets.as_ref());
+            let frame_stats: RenderStats =
+                surface.apply_with_assets(&frame_commands, assets.as_ref());
             draw_commands_rendered += frame_stats.commands_executed as u32;
             draw_commands_unsupported += frame_stats.commands_unsupported as u32;
         }
@@ -343,7 +322,9 @@ fn synchronize_physics(state: &mut RuntimePhysics, input: &PhysicsSyncInput) -> 
             let node_id = state
                 .scene
                 .add_node(state.scene.root(), format!("physics:{}", body.name))
-                .with_context(|| format!("failed to add scene node for physics body `{}`", body.name))?;
+                .with_context(|| {
+                    format!("failed to add scene node for physics body `{}`", body.name)
+                })?;
             state.names_to_nodes.insert(body.name.clone(), node_id);
             state.nodes_to_names.insert(node_id, body.name.clone());
             node_id
@@ -660,10 +641,77 @@ fn call_if_present1_event(
     Ok(false)
 }
 
-fn install_runtime_guards(py: Python<'_>) -> Result<()> {
-    PyModule::from_code_bound(py, SANDBOX_GUARD, "_vcon_runtime_guard.py", "_vcon_runtime_guard")
-        .context("failed to install runtime sandbox guard")?;
+fn install_runtime_guards(py: Python<'_>, cartridge_root: &Path) -> Result<()> {
+    let guard_source = build_sandbox_guard_source(cartridge_root)?;
+    PyModule::from_code_bound(
+        py,
+        &guard_source,
+        "_vcon_runtime_guard.py",
+        "_vcon_runtime_guard",
+    )
+    .context("failed to install runtime sandbox guard")?;
     Ok(())
+}
+
+fn build_sandbox_guard_source(cartridge_root: &Path) -> Result<String> {
+    let root = cartridge_root
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(cartridge_root))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let escaped = python_single_quoted_literal(&root);
+
+    Ok(format!(
+        r#"
+import builtins
+import os
+
+_ALLOWED_ROOTS = {{"vcon"}}
+_BLOCKED_NETWORK_ROOTS = {{"socket", "urllib", "http", "requests", "asyncio"}}
+_CARTRIDGE_ROOT = os.path.normpath('{escaped}')
+
+
+def _is_cartridge_context(globals_dict):
+    if not globals_dict:
+        return False
+    importer = globals_dict.get("__name__", "") or ""
+    if importer.startswith("cartridge_entry"):
+        return True
+
+    module_file = globals_dict.get("__file__", "")
+    if not module_file:
+        return False
+    normalized = os.path.normpath(str(module_file))
+    return normalized == _CARTRIDGE_ROOT or normalized.startswith(_CARTRIDGE_ROOT + os.sep)
+
+
+if not getattr(builtins, "__vcon_guard_installed__", False):
+    _real_import = builtins.__import__
+
+    def _vcon_import(name, globals=None, locals=None, fromlist=(), level=0):
+        root = name.split(".", 1)[0] if name else ""
+
+        if not _is_cartridge_context(globals):
+            return _real_import(name, globals, locals, fromlist, level)
+
+        if root in _BLOCKED_NETWORK_ROOTS:
+            raise ImportError(f"vcon sandbox: blocked network module '{{root}}'")
+
+        if level == 0 and root not in _ALLOWED_ROOTS:
+            raise ImportError(
+                f"vcon sandbox: import '{{root}}' is outside SDK-facing APIs"
+            )
+
+        return _real_import(name, globals, locals, fromlist, level)
+
+    builtins.__import__ = _vcon_import
+    builtins.__vcon_guard_installed__ = True
+"#
+    ))
+}
+
+fn python_single_quoted_literal(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 fn extend_sys_path(py: Python<'_>, cartridge_root: &Path, sdk_root: &Path) -> Result<()> {
@@ -711,7 +759,7 @@ mod tests {
         let asset_dir = cartridge_root.join("assets");
         let save_root = std::env::temp_dir().join("vcon-runtime-save-test-sample");
         let _ = fs::remove_dir_all(&save_root);
-        let mut provider = ScriptedInputProvider;
+        let mut provider = ScriptedInputProvider::default();
 
         let report = run_cartridge(
             entrypoint,
@@ -755,7 +803,7 @@ def on_boot():
         );
         let save_root = std::env::temp_dir().join("vcon-runtime-save-test-net");
         let _ = fs::remove_dir_all(&save_root);
-        let mut provider = ScriptedInputProvider;
+        let mut provider = ScriptedInputProvider::default();
 
         let result = run_cartridge(
             &entrypoint,
@@ -796,7 +844,7 @@ def on_boot():
         );
         let save_root = std::env::temp_dir().join("vcon-runtime-save-test-nonsdk");
         let _ = fs::remove_dir_all(&save_root);
-        let mut provider = ScriptedInputProvider;
+        let mut provider = ScriptedInputProvider::default();
 
         let result = run_cartridge(
             &entrypoint,
@@ -816,6 +864,44 @@ def on_boot():
         let msg = format!("{err:#}");
         assert!(
             msg.contains("outside SDK-facing APIs") && msg.contains("random"),
+            "unexpected error: {msg}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&save_root);
+    }
+
+    #[test]
+    fn blocks_original_import_bypass_attempt() {
+        let (root, entrypoint) = write_temp_entrypoint(
+            r#"
+import vcon
+import builtins
+builtins.__vcon_original_import__("socket")
+"#,
+        );
+        let save_root = std::env::temp_dir().join("vcon-runtime-save-test-bypass");
+        let _ = fs::remove_dir_all(&save_root);
+        let mut provider = ScriptedInputProvider::default();
+
+        let result = run_cartridge(
+            &entrypoint,
+            &root,
+            Path::new("../vcon-sdk"),
+            1,
+            1.0 / 60.0,
+            1280,
+            800,
+            &mut provider,
+            &save_root,
+            8,
+            None,
+            None,
+        );
+        let err = result.expect_err("bypass attempt should fail");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("__vcon_original_import__") || msg.contains("outside SDK-facing APIs"),
             "unexpected error: {msg}"
         );
 

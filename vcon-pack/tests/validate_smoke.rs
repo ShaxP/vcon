@@ -76,7 +76,10 @@ permissions = ["storage"]
 
     assert!(!output.status.success(), "validate must fail");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("sdk_version"), "unexpected stderr: {stderr}");
+    assert!(
+        stderr.contains("sdk_version"),
+        "unexpected stderr: {stderr}"
+    );
 
     let _ = std::fs::remove_dir_all(root);
 }

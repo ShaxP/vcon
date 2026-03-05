@@ -142,10 +142,7 @@ impl SceneGraph {
     }
 
     pub fn set_enabled(&mut self, id: NodeId, enabled: bool) -> Result<(), SceneError> {
-        let node = self
-            .nodes
-            .get_mut(&id)
-            .ok_or(SceneError::NodeMissing(id))?;
+        let node = self.nodes.get_mut(&id).ok_or(SceneError::NodeMissing(id))?;
         node.enabled = enabled;
         Ok(())
     }
@@ -159,10 +156,7 @@ impl SceneGraph {
         scale_x: f64,
         scale_y: f64,
     ) -> Result<(), SceneError> {
-        let node = self
-            .nodes
-            .get_mut(&id)
-            .ok_or(SceneError::NodeMissing(id))?;
+        let node = self.nodes.get_mut(&id).ok_or(SceneError::NodeMissing(id))?;
         node.transform = Transform2D {
             x,
             y,
@@ -185,19 +179,13 @@ impl SceneGraph {
             ));
         }
 
-        let node = self
-            .nodes
-            .get_mut(&id)
-            .ok_or(SceneError::NodeMissing(id))?;
+        let node = self.nodes.get_mut(&id).ok_or(SceneError::NodeMissing(id))?;
         node.physics_body = Some(body);
         Ok(())
     }
 
     pub fn clear_physics_body(&mut self, id: NodeId) -> Result<(), SceneError> {
-        let node = self
-            .nodes
-            .get_mut(&id)
-            .ok_or(SceneError::NodeMissing(id))?;
+        let node = self.nodes.get_mut(&id).ok_or(SceneError::NodeMissing(id))?;
         node.physics_body = None;
         Ok(())
     }
@@ -210,10 +198,7 @@ impl SceneGraph {
         velocity_x: f64,
         velocity_y: f64,
     ) -> Result<(), SceneError> {
-        let node = self
-            .nodes
-            .get_mut(&id)
-            .ok_or(SceneError::NodeMissing(id))?;
+        let node = self.nodes.get_mut(&id).ok_or(SceneError::NodeMissing(id))?;
         node.transform.x = x;
         node.transform.y = y;
         if let Some(body) = node.physics_body.as_mut() {

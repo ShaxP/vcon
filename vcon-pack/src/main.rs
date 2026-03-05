@@ -11,7 +11,12 @@ use vcon_engine::Manifest;
 const BUNDLE_MAGIC: &[u8] = b"VCONPKG";
 const BUNDLE_VERSION: u8 = 1;
 const MANIFEST_PATH: &str = "vcon.toml";
-const DISALLOWED_DEPENDENCY_FILES: &[&str] = &["requirements.txt", "pyproject.toml", "pipfile", "poetry.lock"];
+const DISALLOWED_DEPENDENCY_FILES: &[&str] = &[
+    "requirements.txt",
+    "pyproject.toml",
+    "pipfile",
+    "poetry.lock",
+];
 
 #[derive(Debug, Parser)]
 #[command(name = "vcon-pack", about = "Cartridge packaging and validation tool")]
@@ -51,8 +56,12 @@ fn main() -> Result<()> {
 }
 
 fn build_cartridge(cartridge_dir: &Path, output: Option<&Path>) -> Result<()> {
-    let canonical_cartridge = fs::canonicalize(cartridge_dir)
-        .with_context(|| format!("failed to resolve cartridge path {}", cartridge_dir.display()))?;
+    let canonical_cartridge = fs::canonicalize(cartridge_dir).with_context(|| {
+        format!(
+            "failed to resolve cartridge path {}",
+            cartridge_dir.display()
+        )
+    })?;
 
     let manifest = validate_cartridge_dir(&canonical_cartridge)?;
 
@@ -120,8 +129,8 @@ fn validate_bundle(bundle_path: &Path) -> Result<()> {
         .iter()
         .find(|file| file.path == MANIFEST_PATH)
         .ok_or_else(|| anyhow!("bundle missing required file `{MANIFEST_PATH}`"))?;
-    let manifest_source = std::str::from_utf8(&manifest_file.bytes)
-        .context("bundle manifest must be valid UTF-8")?;
+    let manifest_source =
+        std::str::from_utf8(&manifest_file.bytes).context("bundle manifest must be valid UTF-8")?;
     let manifest = parse_manifest_with_context(manifest_source, Path::new(MANIFEST_PATH))?;
 
     validate_manifest_and_policy_from_files(&manifest, &files)?;
@@ -195,7 +204,10 @@ fn validate_manifest_and_policy(manifest: &Manifest, cartridge_dir: &Path) -> Re
     Ok(())
 }
 
-fn validate_manifest_and_policy_from_files(manifest: &Manifest, files: &[BundleFile]) -> Result<()> {
+fn validate_manifest_and_policy_from_files(
+    manifest: &Manifest,
+    files: &[BundleFile],
+) -> Result<()> {
     manifest
         .validate_sdk_version_compatibility()
         .map_err(|err| anyhow!("{}", err))?;
@@ -222,10 +234,7 @@ fn validate_manifest_and_policy_from_files(manifest: &Manifest, files: &[BundleF
         .iter()
         .any(|file| file.path.starts_with(&assets_prefix))
     {
-        bail!(
-            "assets path not found in bundle: {}",
-            manifest.assets_path
-        );
+        bail!("assets path not found in bundle: {}", manifest.assets_path);
     }
 
     validate_disallowed_dependency_files(files.iter().map(|f| f.path.as_str()))?;
@@ -258,12 +267,8 @@ fn validate_manifest_and_policy_from_files(manifest: &Manifest, files: &[BundleF
 }
 
 fn parse_manifest_with_context(source: &str, manifest_path: &Path) -> Result<Manifest> {
-    Manifest::parse(source).map_err(|err| {
-        anyhow!(
-            "manifest error in {}: {err}",
-            manifest_path.display()
-        )
-    })
+    Manifest::parse(source)
+        .map_err(|err| anyhow!("manifest error in {}: {err}", manifest_path.display()))
 }
 
 fn resolve_output_path(output: Option<&Path>, manifest: &Manifest) -> Result<PathBuf> {
@@ -293,7 +298,10 @@ fn sanitize_for_filename(input: &str) -> String {
         .collect()
 }
 
-fn collect_cartridge_files(cartridge_root: &Path, output_abs: Option<&Path>) -> Result<Vec<BundleFile>> {
+fn collect_cartridge_files(
+    cartridge_root: &Path,
+    output_abs: Option<&Path>,
+) -> Result<Vec<BundleFile>> {
     let mut out = Vec::new();
     let mut pending = vec![cartridge_root.to_path_buf()];
 
@@ -311,7 +319,10 @@ fn collect_cartridge_files(cartridge_root: &Path, output_abs: Option<&Path>) -> 
                 .with_context(|| format!("failed reading metadata for {}", path.display()))?;
 
             if metadata.file_type().is_symlink() {
-                bail!("symlinks are not allowed in cartridge package: {}", path.display());
+                bail!(
+                    "symlinks are not allowed in cartridge package: {}",
+                    path.display()
+                );
             }
 
             if metadata.is_dir() {
@@ -330,15 +341,13 @@ fn collect_cartridge_files(cartridge_root: &Path, output_abs: Option<&Path>) -> 
                 }
             }
 
-            let rel = path
-                .strip_prefix(cartridge_root)
-                .with_context(|| {
-                    format!(
-                        "failed computing relative path for {} against {}",
-                        path.display(),
-                        cartridge_root.display()
-                    )
-                })?;
+            let rel = path.strip_prefix(cartridge_root).with_context(|| {
+                format!(
+                    "failed computing relative path for {} against {}",
+                    path.display(),
+                    cartridge_root.display()
+                )
+            })?;
 
             let normalized = normalize_relative_path(rel)?;
             let bytes = fs::read(&path)
@@ -360,9 +369,9 @@ fn normalize_relative_path(path: &Path) -> Result<String> {
     for component in path.components() {
         match component {
             Component::Normal(part) => {
-                let text = part
-                    .to_str()
-                    .ok_or_else(|| anyhow!("path contains non-UTF-8 segment: {}", path.display()))?;
+                let text = part.to_str().ok_or_else(|| {
+                    anyhow!("path contains non-UTF-8 segment: {}", path.display())
+                })?;
                 if text.is_empty() {
                     bail!("path contains empty segment: {}", path.display());
                 }
@@ -387,11 +396,7 @@ fn normalized_bundle_dir_prefix(path: &str) -> Result<String> {
 
 fn validate_disallowed_dependency_files<'a>(paths: impl Iterator<Item = &'a str>) -> Result<()> {
     for path in paths {
-        let file_name = path
-            .rsplit('/')
-            .next()
-            .unwrap_or(path)
-            .to_ascii_lowercase();
+        let file_name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
 
         if DISALLOWED_DEPENDENCY_FILES.contains(&file_name.as_str()) {
             bail!(
@@ -440,9 +445,7 @@ fn decode_bundle(bytes: &[u8]) -> Result<Vec<BundleFile>> {
     let mut cursor = BUNDLE_MAGIC.len();
     let version = read_u8(bytes, &mut cursor)?;
     if version != BUNDLE_VERSION {
-        bail!(
-            "unsupported bundle version marker `{version}` (expected `{BUNDLE_VERSION}`)"
-        );
+        bail!("unsupported bundle version marker `{version}` (expected `{BUNDLE_VERSION}`)");
     }
 
     let file_count = read_u32(bytes, &mut cursor)? as usize;
@@ -490,12 +493,16 @@ fn read_u8(bytes: &[u8], cursor: &mut usize) -> Result<u8> {
 
 fn read_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32> {
     let raw = read_bytes(bytes, cursor, 4)?;
-    Ok(u32::from_le_bytes(raw.try_into().expect("u32 size is fixed")))
+    Ok(u32::from_le_bytes(
+        raw.try_into().expect("u32 size is fixed"),
+    ))
 }
 
 fn read_u64(bytes: &[u8], cursor: &mut usize) -> Result<u64> {
     let raw = read_bytes(bytes, cursor, 8)?;
-    Ok(u64::from_le_bytes(raw.try_into().expect("u64 size is fixed")))
+    Ok(u64::from_le_bytes(
+        raw.try_into().expect("u64 size is fixed"),
+    ))
 }
 
 fn read_bytes<'a>(bytes: &'a [u8], cursor: &mut usize, len: usize) -> Result<&'a [u8]> {

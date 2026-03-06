@@ -10,6 +10,7 @@ This repository uses two Rust test styles:
   - `vcon-engine/tests/foundation_smoke.rs`
   - `vcon-runtime/tests/runtime_smoke.rs`
   - `vcon-runtime/tests/determinism_replay.rs`
+  - `vcon-runtime/tests/controller_hotplug.rs`
   - `vcon-runtime/tests/input_diagnostics_smoke.rs`
   - `vcon-runtime/tests/render_golden.rs`
   - `vcon-runtime/tests/performance_smoke.rs`

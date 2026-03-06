@@ -14,6 +14,21 @@ impl PhysicsVec2 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhysicsBackend {
+    Legacy,
+    Box2d,
+}
+
+impl PhysicsBackend {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PhysicsBackend::Legacy => "legacy",
+            PhysicsBackend::Box2d => "box2d",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollisionEvent {
     pub a: NodeId,
@@ -29,8 +44,19 @@ struct BodyState {
     restitution: f64,
 }
 
+impl BodyState {
+    fn inverse_mass(&self) -> f64 {
+        if matches!(self.kind, PhysicsBodyKind::Dynamic) {
+            1.0
+        } else {
+            0.0
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PhysicsWorld {
+    backend: PhysicsBackend,
     gravity: PhysicsVec2,
     bodies: HashMap<NodeId, BodyState>,
     active_collisions: HashSet<(NodeId, NodeId)>,
@@ -45,10 +71,25 @@ impl Default for PhysicsWorld {
 impl PhysicsWorld {
     pub fn new() -> Self {
         Self {
+            backend: PhysicsBackend::Box2d,
             gravity: PhysicsVec2::new(0.0, 0.0),
             bodies: HashMap::new(),
             active_collisions: HashSet::new(),
         }
+    }
+
+    pub fn with_backend(backend: PhysicsBackend) -> Self {
+        let mut world = Self::new();
+        world.backend = backend;
+        world
+    }
+
+    pub fn set_backend(&mut self, backend: PhysicsBackend) {
+        self.backend = backend;
+    }
+
+    pub fn backend(&self) -> PhysicsBackend {
+        self.backend
     }
 
     pub fn set_gravity(&mut self, gravity: PhysicsVec2) {
@@ -89,6 +130,25 @@ impl PhysicsWorld {
     }
 
     pub fn step(&mut self, dt_fixed: f64) -> Vec<CollisionEvent> {
+        match self.backend {
+            PhysicsBackend::Legacy => self.step_legacy(dt_fixed),
+            PhysicsBackend::Box2d => self.step_box2d(dt_fixed),
+        }
+    }
+
+    pub fn apply_to_scene(&self, scene: &mut SceneGraph) {
+        for (id, state) in &self.bodies {
+            let _ = scene.update_physics_state(
+                *id,
+                state.position.x,
+                state.position.y,
+                state.velocity.x,
+                state.velocity.y,
+            );
+        }
+    }
+
+    fn step_legacy(&mut self, dt_fixed: f64) -> Vec<CollisionEvent> {
         for body in self.bodies.values_mut() {
             if matches!(body.kind, PhysicsBodyKind::Dynamic) {
                 body.velocity.x += self.gravity.x * dt_fixed;
@@ -98,20 +158,72 @@ impl PhysicsWorld {
             }
         }
 
-        let mut ids = self.bodies.keys().copied().collect::<Vec<_>>();
-        ids.sort_by_key(|id| id.0);
-
         let mut collisions_now = HashSet::new();
-        for i in 0..ids.len() {
-            for j in (i + 1)..ids.len() {
-                let a_id = ids[i];
-                let b_id = ids[j];
-                if self.resolve_collision(a_id, b_id) {
-                    collisions_now.insert((a_id, b_id));
-                }
+        for (a_id, b_id) in self.ordered_pairs() {
+            if self.resolve_collision_legacy(a_id, b_id) {
+                collisions_now.insert((a_id, b_id));
             }
         }
 
+        self.build_collision_events(collisions_now)
+    }
+
+    fn step_box2d(&mut self, dt_fixed: f64) -> Vec<CollisionEvent> {
+        const VELOCITY_ITERATIONS: usize = 8;
+        const POSITION_ITERATIONS: usize = 3;
+
+        for body in self.bodies.values_mut() {
+            if matches!(body.kind, PhysicsBodyKind::Dynamic) {
+                body.velocity.x += self.gravity.x * dt_fixed;
+                body.velocity.y += self.gravity.y * dt_fixed;
+            }
+        }
+
+        let pairs = self.ordered_pairs();
+
+        for _ in 0..VELOCITY_ITERATIONS {
+            for (a_id, b_id) in &pairs {
+                let _ = self.solve_velocity_contact(*a_id, *b_id);
+            }
+        }
+
+        for body in self.bodies.values_mut() {
+            if matches!(body.kind, PhysicsBodyKind::Dynamic) {
+                body.position.x += body.velocity.x * dt_fixed;
+                body.position.y += body.velocity.y * dt_fixed;
+            }
+        }
+
+        for _ in 0..POSITION_ITERATIONS {
+            for (a_id, b_id) in &pairs {
+                let _ = self.solve_position_contact(*a_id, *b_id);
+            }
+        }
+
+        let mut collisions_now = HashSet::new();
+        for (a_id, b_id) in pairs {
+            if self.is_overlapping(a_id, b_id) {
+                collisions_now.insert((a_id, b_id));
+            }
+        }
+
+        self.build_collision_events(collisions_now)
+    }
+
+    fn ordered_pairs(&self) -> Vec<(NodeId, NodeId)> {
+        let mut ids = self.bodies.keys().copied().collect::<Vec<_>>();
+        ids.sort_by_key(|id| id.0);
+
+        let mut pairs = Vec::new();
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                pairs.push((ids[i], ids[j]));
+            }
+        }
+        pairs
+    }
+
+    fn build_collision_events(&mut self, collisions_now: HashSet<(NodeId, NodeId)>) -> Vec<CollisionEvent> {
         let mut events = Vec::new();
         for pair in &collisions_now {
             if !self.active_collisions.contains(pair) {
@@ -127,23 +239,11 @@ impl PhysicsWorld {
         events
     }
 
-    pub fn apply_to_scene(&self, scene: &mut SceneGraph) {
-        for (id, state) in &self.bodies {
-            let _ = scene.update_physics_state(
-                *id,
-                state.position.x,
-                state.position.y,
-                state.velocity.x,
-                state.velocity.y,
-            );
-        }
-    }
-
-    fn resolve_collision(&mut self, a_id: NodeId, b_id: NodeId) -> bool {
-        let Some(a_state) = self.bodies.get(&a_id).cloned() else {
+    fn is_overlapping(&self, a_id: NodeId, b_id: NodeId) -> bool {
+        let Some(a_state) = self.bodies.get(&a_id) else {
             return false;
         };
-        let Some(b_state) = self.bodies.get(&b_id).cloned() else {
+        let Some(b_state) = self.bodies.get(&b_id) else {
             return false;
         };
 
@@ -152,8 +252,20 @@ impl PhysicsWorld {
         let radius_sum = a_state.radius + b_state.radius;
         let dist_sq = dx * dx + dy * dy;
 
+        dist_sq <= radius_sum * radius_sum
+    }
+
+    fn collision_normal_penetration(&self, a_id: NodeId, b_id: NodeId) -> Option<(f64, f64, f64)> {
+        let a_state = self.bodies.get(&a_id)?;
+        let b_state = self.bodies.get(&b_id)?;
+
+        let dx = b_state.position.x - a_state.position.x;
+        let dy = b_state.position.y - a_state.position.y;
+        let radius_sum = a_state.radius + b_state.radius;
+        let dist_sq = dx * dx + dy * dy;
+
         if dist_sq > radius_sum * radius_sum {
-            return false;
+            return None;
         }
 
         let dist = dist_sq.sqrt();
@@ -162,8 +274,115 @@ impl PhysicsWorld {
         } else {
             (1.0, 0.0)
         };
-
         let penetration = (radius_sum - dist).max(0.0);
+
+        Some((nx, ny, penetration))
+    }
+
+    fn solve_velocity_contact(&mut self, a_id: NodeId, b_id: NodeId) -> bool {
+        let Some((nx, ny, _)) = self.collision_normal_penetration(a_id, b_id) else {
+            return false;
+        };
+
+        let Some(a_state) = self.bodies.get(&a_id).cloned() else {
+            return false;
+        };
+        let Some(b_state) = self.bodies.get(&b_id).cloned() else {
+            return false;
+        };
+
+        let rvx = b_state.velocity.x - a_state.velocity.x;
+        let rvy = b_state.velocity.y - a_state.velocity.y;
+        let vel_along_normal = rvx * nx + rvy * ny;
+
+        if vel_along_normal >= 0.0 {
+            return true;
+        }
+
+        let inv_mass_a = a_state.inverse_mass();
+        let inv_mass_b = b_state.inverse_mass();
+        let inv_mass_sum = inv_mass_a + inv_mass_b;
+        if inv_mass_sum <= 0.0 {
+            return true;
+        }
+
+        let e = ((a_state.restitution + b_state.restitution) * 0.5).clamp(0.0, 1.0);
+        let j = -(1.0 + e) * vel_along_normal / inv_mass_sum;
+        let impulse_x = j * nx;
+        let impulse_y = j * ny;
+
+        let mut a_new = a_state;
+        let mut b_new = b_state;
+
+        if inv_mass_a > 0.0 {
+            a_new.velocity.x -= impulse_x * inv_mass_a;
+            a_new.velocity.y -= impulse_y * inv_mass_a;
+        }
+        if inv_mass_b > 0.0 {
+            b_new.velocity.x += impulse_x * inv_mass_b;
+            b_new.velocity.y += impulse_y * inv_mass_b;
+        }
+
+        self.bodies.insert(a_id, a_new);
+        self.bodies.insert(b_id, b_new);
+        true
+    }
+
+    fn solve_position_contact(&mut self, a_id: NodeId, b_id: NodeId) -> bool {
+        let Some((nx, ny, penetration)) = self.collision_normal_penetration(a_id, b_id) else {
+            return false;
+        };
+
+        let Some(a_state) = self.bodies.get(&a_id).cloned() else {
+            return false;
+        };
+        let Some(b_state) = self.bodies.get(&b_id).cloned() else {
+            return false;
+        };
+
+        let inv_mass_a = a_state.inverse_mass();
+        let inv_mass_b = b_state.inverse_mass();
+        let inv_mass_sum = inv_mass_a + inv_mass_b;
+        if inv_mass_sum <= 0.0 {
+            return true;
+        }
+
+        // Box2D-style positional correction to avoid deep overlap drift.
+        let slop = 0.01;
+        let percent = 0.8;
+        let correction = ((penetration - slop).max(0.0) / inv_mass_sum) * percent;
+        if correction <= 0.0 {
+            return true;
+        }
+
+        let mut a_new = a_state;
+        let mut b_new = b_state;
+
+        if inv_mass_a > 0.0 {
+            a_new.position.x -= correction * nx * inv_mass_a;
+            a_new.position.y -= correction * ny * inv_mass_a;
+        }
+        if inv_mass_b > 0.0 {
+            b_new.position.x += correction * nx * inv_mass_b;
+            b_new.position.y += correction * ny * inv_mass_b;
+        }
+
+        self.bodies.insert(a_id, a_new);
+        self.bodies.insert(b_id, b_new);
+        true
+    }
+
+    fn resolve_collision_legacy(&mut self, a_id: NodeId, b_id: NodeId) -> bool {
+        let Some((nx, ny, penetration)) = self.collision_normal_penetration(a_id, b_id) else {
+            return false;
+        };
+
+        let Some(a_state) = self.bodies.get(&a_id).cloned() else {
+            return false;
+        };
+        let Some(b_state) = self.bodies.get(&b_id).cloned() else {
+            return false;
+        };
 
         let mut a_new = a_state.clone();
         let mut b_new = b_state.clone();
@@ -192,16 +411,8 @@ impl PhysicsWorld {
 
         if vel_along_normal < 0.0 {
             let e = ((a_state.restitution + b_state.restitution) * 0.5).clamp(0.0, 1.0);
-            let inv_mass_a = if matches!(a_state.kind, PhysicsBodyKind::Dynamic) {
-                1.0
-            } else {
-                0.0
-            };
-            let inv_mass_b = if matches!(b_state.kind, PhysicsBodyKind::Dynamic) {
-                1.0
-            } else {
-                0.0
-            };
+            let inv_mass_a = a_state.inverse_mass();
+            let inv_mass_b = b_state.inverse_mass();
 
             let denom = inv_mass_a + inv_mass_b;
             if denom > 0.0 {
@@ -241,7 +452,13 @@ pub fn upsert_scene_body(
 mod tests {
     use crate::scene::{NodeId, PhysicsBody2D, PhysicsBodyKind, SceneGraph};
 
-    use super::{PhysicsVec2, PhysicsWorld};
+    use super::{PhysicsBackend, PhysicsVec2, PhysicsWorld};
+
+    #[test]
+    fn defaults_to_box2d_backend() {
+        let world = PhysicsWorld::new();
+        assert_eq!(world.backend(), PhysicsBackend::Box2d);
+    }
 
     #[test]
     fn collisions_emit_once_while_contact_persists() {
@@ -297,7 +514,7 @@ mod tests {
 
     #[test]
     fn fixed_step_is_deterministic() {
-        fn run() -> (f64, f64) {
+        fn run(backend: PhysicsBackend) -> (f64, f64) {
             let mut scene = SceneGraph::new();
             let root = scene.root();
             let a = scene.add_node(root, "a").expect("node a");
@@ -334,7 +551,7 @@ mod tests {
                 )
                 .expect("b body");
 
-            let mut world = PhysicsWorld::new();
+            let mut world = PhysicsWorld::with_backend(backend);
             world.set_gravity(PhysicsVec2::new(0.0, 0.0));
 
             for _ in 0..120 {
@@ -347,6 +564,7 @@ mod tests {
             (node.transform.x, node.transform.y)
         }
 
-        assert_eq!(run(), run());
+        assert_eq!(run(PhysicsBackend::Legacy), run(PhysicsBackend::Legacy));
+        assert_eq!(run(PhysicsBackend::Box2d), run(PhysicsBackend::Box2d));
     }
 }

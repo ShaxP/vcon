@@ -125,6 +125,10 @@ fn main() -> Result<()> {
         backend_selection.requested,
         runtime_report.render_backend.as_str()
     );
+    println!(
+        "Physics backend: {}",
+        runtime_report.physics_backend.as_str()
+    );
     if let Some(reason) = &backend_selection.fallback_reason {
         println!("Render backend fallback: {reason}");
     }

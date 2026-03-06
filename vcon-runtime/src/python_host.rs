@@ -8,7 +8,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use vcon_engine::{
     scripted_input_frame_seeded, AssetStore, DrawCommand, FrameCommandBuffer, InputFrame, NodeId,
-    PhysicsBody2D, PhysicsBodyKind, PhysicsVec2, PhysicsWorld, RenderStats, SceneGraph,
+    PhysicsBackend, PhysicsBody2D, PhysicsBodyKind, PhysicsVec2, PhysicsWorld, RenderStats,
+    SceneGraph,
 };
 
 use crate::render_backend::{ActiveRenderBackend, RenderExecutor};
@@ -26,6 +27,7 @@ pub struct RuntimeInvocationReport {
     pub draw_commands_rendered: u32,
     pub draw_commands_unsupported: u32,
     pub render_backend: ActiveRenderBackend,
+    pub physics_backend: PhysicsBackend,
     pub on_shutdown_called: bool,
 }
 
@@ -81,12 +83,28 @@ struct PhysicsSyncInput {
     bodies: Vec<PhysicsBodySpec>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct RuntimePhysics {
     scene: SceneGraph,
     world: PhysicsWorld,
     names_to_nodes: HashMap<String, NodeId>,
     nodes_to_names: HashMap<NodeId, String>,
+}
+
+impl Default for RuntimePhysics {
+    fn default() -> Self {
+        let backend = match std::env::var("VCON_PHYSICS_BACKEND") {
+            Ok(value) if value.eq_ignore_ascii_case("legacy") => PhysicsBackend::Legacy,
+            _ => PhysicsBackend::Box2d,
+        };
+
+        Self {
+            scene: SceneGraph::default(),
+            world: PhysicsWorld::with_backend(backend),
+            names_to_nodes: HashMap::new(),
+            nodes_to_names: HashMap::new(),
+        }
+    }
 }
 
 pub fn run_cartridge(
@@ -195,6 +213,7 @@ pub fn run_cartridge(
             draw_commands_rendered,
             draw_commands_unsupported,
             render_backend: executor.backend(),
+            physics_backend: physics.world.backend(),
             on_shutdown_called,
         })
     })
@@ -754,6 +773,7 @@ mod tests {
 
     use super::{run_cartridge, ScriptedInputProvider};
     use crate::render_backend::ActiveRenderBackend;
+    use vcon_engine::PhysicsBackend;
 
     #[test]
     fn invokes_sample_lifecycle_callbacks_loop_and_draw_commands() {
@@ -792,6 +812,7 @@ mod tests {
         assert_eq!(report.draw_commands_rendered, 24);
         assert_eq!(report.draw_commands_unsupported, 0);
         assert_eq!(report.render_backend, ActiveRenderBackend::Software);
+        assert_eq!(report.physics_backend, PhysicsBackend::Box2d);
         let _ = fs::remove_dir_all(&save_root);
     }
 

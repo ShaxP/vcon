@@ -5,6 +5,7 @@ use clap::{Parser, ValueEnum};
 use vcon_engine::boot_cartridge;
 
 mod gamepad;
+mod audio_backend;
 mod python_host;
 mod render_backend;
 
@@ -128,6 +129,13 @@ fn main() -> Result<()> {
     println!(
         "Physics backend: {}",
         runtime_report.physics_backend.as_str()
+    );
+    println!(
+        "Audio backend: {} (underruns={} overruns={} dropped_buffers={})",
+        runtime_report.audio_backend,
+        runtime_report.audio_underruns,
+        runtime_report.audio_overruns,
+        runtime_report.audio_dropped_buffers
     );
     if let Some(reason) = &backend_selection.fallback_reason {
         println!("Render backend fallback: {reason}");

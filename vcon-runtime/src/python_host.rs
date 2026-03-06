@@ -7,11 +7,12 @@ use anyhow::{anyhow, Context, Result};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use vcon_engine::{
-    scripted_input_frame_seeded, AssetStore, DrawCommand, FrameCommandBuffer, InputFrame, NodeId,
-    PhysicsBackend, PhysicsBody2D, PhysicsBodyKind, PhysicsVec2, PhysicsWorld, RenderStats,
-    SceneGraph,
+    scripted_input_frame_seeded, ActiveVoice, AssetStore, AudioMixer, DrawCommand,
+    FrameCommandBuffer, InputFrame, NodeId, PhysicsBackend, PhysicsBody2D, PhysicsBodyKind,
+    PhysicsVec2, PhysicsWorld, RenderStats, SceneGraph,
 };
 
+use crate::audio_backend::{AudioBackendHealth, SimulatedAudioDevice};
 use crate::render_backend::{ActiveRenderBackend, RenderExecutor};
 
 static NEXT_MODULE_ID: AtomicUsize = AtomicUsize::new(0);
@@ -28,6 +29,10 @@ pub struct RuntimeInvocationReport {
     pub draw_commands_unsupported: u32,
     pub render_backend: ActiveRenderBackend,
     pub physics_backend: PhysicsBackend,
+    pub audio_backend: String,
+    pub audio_underruns: u64,
+    pub audio_overruns: u64,
+    pub audio_dropped_buffers: u64,
     pub on_shutdown_called: bool,
 }
 
@@ -107,6 +112,26 @@ impl Default for RuntimePhysics {
     }
 }
 
+#[derive(Debug, Default)]
+struct RuntimeAudio {
+    mixer: AudioMixer,
+    device: SimulatedAudioDevice,
+}
+
+#[derive(Debug, Clone)]
+struct AudioPlayRequestSpec {
+    clip_id: String,
+    volume: f32,
+    looped: bool,
+}
+
+#[derive(Debug, Default, Clone)]
+struct AudioRuntimeCommands {
+    play_requests: Vec<AudioPlayRequestSpec>,
+    stop_voice_ids: Vec<u64>,
+    stop_all: bool,
+}
+
 pub fn run_cartridge(
     entrypoint_path: &Path,
     cartridge_root: &Path,
@@ -140,6 +165,7 @@ pub fn run_cartridge(
         install_runtime_guards(py, cartridge_root)?;
         configure_save_api(py, save_root, save_quota_mb)?;
         configure_physics_api(py)?;
+        configure_audio_api(py)?;
 
         let module_name = format!(
             "cartridge_entry_{}",
@@ -163,6 +189,7 @@ pub fn run_cartridge(
         let mut draw_commands_rendered = 0;
         let mut draw_commands_unsupported = 0;
         let mut physics = RuntimePhysics::default();
+        let mut audio = RuntimeAudio::default();
 
         let mut executor = RenderExecutor::new(render_backend, width, height);
 
@@ -185,6 +212,12 @@ pub fn run_cartridge(
                 }
             }
 
+            let audio_commands = read_audio_runtime_commands(py)?;
+            apply_audio_runtime_commands(&mut audio, &audio_commands);
+            let active_voices = audio.mixer.flush_queue().to_vec();
+            audio.device.process_frame(dt_fixed, active_voices.len());
+            publish_audio_runtime_state(py, &active_voices, &audio.device.health())?;
+
             begin_render_frame(py)?;
             if call_if_present1_f64(&module, "on_render", 1.0)? {
                 on_render_calls += 1;
@@ -202,6 +235,7 @@ pub fn run_cartridge(
         }
 
         let on_shutdown_called = call_if_present0(&module, "on_shutdown")?;
+        let audio_health = audio.device.health();
 
         Ok(RuntimeInvocationReport {
             on_boot_called,
@@ -214,6 +248,10 @@ pub fn run_cartridge(
             draw_commands_unsupported,
             render_backend: executor.backend(),
             physics_backend: physics.world.backend(),
+            audio_backend: SimulatedAudioDevice::BACKEND_NAME.to_owned(),
+            audio_underruns: audio_health.underruns,
+            audio_overruns: audio_health.overruns,
+            audio_dropped_buffers: audio_health.dropped_buffers,
             on_shutdown_called,
         })
     })
@@ -240,6 +278,36 @@ fn configure_physics_api(py: Python<'_>) -> Result<()> {
         .context("vcon.physics._set_runtime_state not found")?
         .call1(((0.0_f64, 0.0_f64), Vec::<&str>::new()))
         .context("vcon.physics._set_runtime_state() failed")?;
+    Ok(())
+}
+
+fn configure_audio_api(py: Python<'_>) -> Result<()> {
+    let audio_mod = py
+        .import_bound("vcon.audio")
+        .context("failed to import vcon.audio")?;
+    let active = PyList::empty_bound(py);
+    let health = PyDict::new_bound(py);
+    health
+        .set_item("initialized", true)
+        .context("audio initialized health set failed")?;
+    health
+        .set_item("queued_buffers", 0_u32)
+        .context("audio queued_buffers health set failed")?;
+    health
+        .set_item("underruns", 0_u64)
+        .context("audio underruns health set failed")?;
+    health
+        .set_item("overruns", 0_u64)
+        .context("audio overruns health set failed")?;
+    health
+        .set_item("dropped_buffers", 0_u64)
+        .context("audio dropped_buffers health set failed")?;
+
+    audio_mod
+        .getattr("_set_runtime_state")
+        .context("vcon.audio._set_runtime_state not found")?
+        .call1((active, health))
+        .context("vcon.audio._set_runtime_state() failed")?;
     Ok(())
 }
 
@@ -448,6 +516,150 @@ fn publish_physics_runtime_state(py: Python<'_>, state: &RuntimePhysics) -> Resu
         .context("vcon.physics._set_runtime_state not found")?
         .call1(((gravity.x, gravity.y), bodies))
         .context("vcon.physics._set_runtime_state() failed")?;
+    Ok(())
+}
+
+fn read_audio_runtime_commands(py: Python<'_>) -> Result<AudioRuntimeCommands> {
+    let audio_mod = py
+        .import_bound("vcon.audio")
+        .context("failed to import vcon.audio")?;
+    let exported = audio_mod
+        .getattr("_export_runtime_state")
+        .context("vcon.audio._export_runtime_state not found")?
+        .call0()
+        .context("vcon.audio._export_runtime_state() failed")?;
+    let dict = exported
+        .downcast_into::<PyDict>()
+        .map_err(|_| anyhow!("vcon.audio._export_runtime_state() must return dict"))?;
+
+    let mut out = AudioRuntimeCommands::default();
+
+    if let Some(play_requests) = dict
+        .get_item("play_requests")
+        .context("audio play_requests lookup failed")?
+    {
+        let play_requests = play_requests
+            .downcast_into::<PyList>()
+            .map_err(|_| anyhow!("audio play_requests must be list"))?;
+
+        for item in play_requests.iter() {
+            let req = item
+                .downcast_into::<PyDict>()
+                .map_err(|_| anyhow!("audio play request entry must be dict"))?;
+            let clip_id = req
+                .get_item("clip_id")
+                .context("audio clip_id lookup failed")?
+                .ok_or_else(|| anyhow!("audio play request missing `clip_id`"))?
+                .extract::<String>()
+                .map_err(|_| anyhow!("audio clip_id must be string"))?;
+            let volume = req
+                .get_item("volume")
+                .context("audio volume lookup failed")?
+                .and_then(|value| value.extract::<f32>().ok())
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0);
+            let looped = req
+                .get_item("looped")
+                .context("audio looped lookup failed")?
+                .and_then(|value| value.extract::<bool>().ok())
+                .unwrap_or(false);
+            out.play_requests.push(AudioPlayRequestSpec {
+                clip_id,
+                volume,
+                looped,
+            });
+        }
+    }
+
+    if let Some(stop_ids) = dict
+        .get_item("stop_voice_ids")
+        .context("audio stop_voice_ids lookup failed")?
+    {
+        let stop_ids = stop_ids
+            .downcast_into::<PyList>()
+            .map_err(|_| anyhow!("audio stop_voice_ids must be list"))?;
+        for item in stop_ids.iter() {
+            out.stop_voice_ids.push(
+                item.extract::<u64>()
+                    .map_err(|_| anyhow!("audio stop voice id must be integer"))?,
+            );
+        }
+    }
+
+    out.stop_all = dict
+        .get_item("stop_all")
+        .context("audio stop_all lookup failed")?
+        .and_then(|value| value.extract::<bool>().ok())
+        .unwrap_or(false);
+
+    Ok(out)
+}
+
+fn apply_audio_runtime_commands(audio: &mut RuntimeAudio, commands: &AudioRuntimeCommands) {
+    if commands.stop_all {
+        audio.mixer.stop_all();
+    }
+    for voice_id in &commands.stop_voice_ids {
+        audio.mixer.stop_voice(*voice_id);
+    }
+    for request in &commands.play_requests {
+        if request.looped {
+            audio
+                .mixer
+                .queue_music(request.clip_id.clone(), request.volume, true);
+        } else {
+            audio
+                .mixer
+                .queue_sfx(request.clip_id.clone(), request.volume);
+        }
+    }
+}
+
+fn publish_audio_runtime_state(
+    py: Python<'_>,
+    active_voices: &[ActiveVoice],
+    health: &AudioBackendHealth,
+) -> Result<()> {
+    let audio_mod = py
+        .import_bound("vcon.audio")
+        .context("failed to import vcon.audio")?;
+
+    let active = PyList::empty_bound(py);
+    for voice in active_voices {
+        let item = PyDict::new_bound(py);
+        item.set_item("voice_id", voice.voice_id)
+            .context("set active audio voice id failed")?;
+        item.set_item("clip_id", &voice.clip_id)
+            .context("set active audio clip id failed")?;
+        item.set_item("volume", voice.volume)
+            .context("set active audio volume failed")?;
+        item.set_item("looped", voice.looped)
+            .context("set active audio looped failed")?;
+        active.append(item).context("append active voice failed")?;
+    }
+
+    let health_dict = PyDict::new_bound(py);
+    health_dict
+        .set_item("initialized", health.initialized)
+        .context("set audio health initialized failed")?;
+    health_dict
+        .set_item("queued_buffers", health.queued_buffers)
+        .context("set audio health queued buffers failed")?;
+    health_dict
+        .set_item("underruns", health.underruns)
+        .context("set audio health underruns failed")?;
+    health_dict
+        .set_item("overruns", health.overruns)
+        .context("set audio health overruns failed")?;
+    health_dict
+        .set_item("dropped_buffers", health.dropped_buffers)
+        .context("set audio health dropped buffers failed")?;
+
+    audio_mod
+        .getattr("_set_runtime_state")
+        .context("vcon.audio._set_runtime_state not found")?
+        .call1((active, health_dict))
+        .context("vcon.audio._set_runtime_state() failed")?;
     Ok(())
 }
 

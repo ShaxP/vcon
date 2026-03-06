@@ -44,3 +44,11 @@ def on_shutdown():
 - `vcon.physics.remove_body(name)`
 - `vcon.physics.body(name) -> dict | None`
 - `vcon.physics.list_bodies() -> list[dict]`
+
+## Audio
+- `vcon.audio.play_sfx(clip_id, volume=1.0)`
+- `vcon.audio.play_music(clip_id, volume=1.0, looped=True)`
+- `vcon.audio.stop_voice(voice_id)`
+- `vcon.audio.stop_all()`
+- `vcon.audio.active_voices() -> list[dict]`
+- `vcon.audio.health() -> dict`

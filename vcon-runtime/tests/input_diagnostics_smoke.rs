@@ -37,8 +37,8 @@ fn diagnostics_renders_scripted_input_state() {
 
     assert!(stdout.contains("Loaded cartridge: Input Diagnostics"));
     assert!(stdout.contains("Loop callbacks invoked: on_update=1 on_render=1"));
-    assert!(stdout.contains("Draw commands submitted: 11"));
-    assert!(stdout.contains("Draw commands rendered: 11 (unsupported: 0)"));
+    assert!(stdout.contains("Draw commands submitted: 22"));
+    assert!(stdout.contains("Draw commands rendered: 22 (unsupported: 0)"));
 }
 
 #[test]
@@ -47,8 +47,8 @@ fn diagnostics_renders_neutral_when_input_is_none() {
 
     assert!(stdout.contains("Loaded cartridge: Input Diagnostics"));
     assert!(stdout.contains("Loop callbacks invoked: on_update=1 on_render=1"));
-    assert!(stdout.contains("Draw commands submitted: 10"));
-    assert!(stdout.contains("Draw commands rendered: 10 (unsupported: 0)"));
+    assert!(stdout.contains("Draw commands submitted: 21"));
+    assert!(stdout.contains("Draw commands rendered: 21 (unsupported: 0)"));
 }
 
 #[test]

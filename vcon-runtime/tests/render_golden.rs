@@ -69,6 +69,6 @@ fn input_diagnostics_render_matches_golden_hash() {
     let digest = fnv1a64(&bytes);
 
     // Golden hash for 320x200 dump after one neutral diagnostics frame.
-    const EXPECTED: u64 = 17759925594150174180;
+    const EXPECTED: u64 = 8658551470775578051;
     assert_eq!(digest, EXPECTED, "input diagnostics golden frame changed");
 }

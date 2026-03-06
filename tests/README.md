@@ -13,6 +13,7 @@ This repository uses two Rust test styles:
   - `vcon-runtime/tests/controller_hotplug.rs`
   - `vcon-runtime/tests/physics_box2d_replay.rs`
   - `vcon-runtime/tests/audio_playback_smoke.rs`
+  - `vcon-runtime/tests/sandbox_bypass_regression.rs`
   - `vcon-runtime/tests/input_diagnostics_smoke.rs`
   - `vcon-runtime/tests/render_golden.rs`
   - `vcon-runtime/tests/performance_smoke.rs`
@@ -24,3 +25,13 @@ Run all tests from workspace root:
 ```bash
 cargo test --workspace
 ```
+
+Run Stream E acceptance categories and generate readiness reports:
+
+```bash
+./scripts/run_acceptance_suite.sh
+```
+
+Generated reports:
+- `docs/reports/release-readiness-<date>.md`
+- `docs/reports/steam-deck-validation-<date>.md`

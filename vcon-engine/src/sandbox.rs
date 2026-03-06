@@ -88,7 +88,21 @@ fn detect_dynamic_import_patterns(source: &str) -> Vec<String> {
         if content.contains("importlib.import_module(") {
             out.push("importlib.import_module".to_owned());
         }
+        if content.contains("eval(") {
+            out.push("eval".to_owned());
+        }
+        if content.contains("exec(") {
+            out.push("exec".to_owned());
+        }
+        if content.contains("builtins.__dict__") {
+            out.push("builtins.__dict__".to_owned());
+        }
+        if content.contains("getattr(builtins") {
+            out.push("getattr(builtins".to_owned());
+        }
     }
+    out.sort();
+    out.dedup();
     out
 }
 
@@ -173,6 +187,27 @@ module = __import__("socket")
         assert_eq!(
             violations,
             vec![PolicyViolation::DynamicImport("__import__".to_owned())]
+        );
+    }
+
+    #[test]
+    fn blocks_runtime_escape_patterns() {
+        let source = r#"
+import vcon
+import builtins
+mod = builtins.__dict__["__import__"]("socket")
+payload = "im" + "port socket"
+exec(payload)
+"#;
+
+        let violations = scan_entrypoint_source(source);
+        assert_eq!(
+            violations,
+            vec![
+                PolicyViolation::ImportNotAllowed("builtins".to_owned()),
+                PolicyViolation::DynamicImport("builtins.__dict__".to_owned()),
+                PolicyViolation::DynamicImport("exec".to_owned()),
+            ]
         );
     }
 }

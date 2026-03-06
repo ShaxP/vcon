@@ -906,6 +906,9 @@ _CARTRIDGE_ROOT = os.path.normpath('{escaped}')
 
 
 def _is_cartridge_context(globals_dict):
+    # Direct __import__ calls can pass globals=None; treat those as sandboxed.
+    if globals_dict is None:
+        return True
     if not globals_dict:
         return False
     importer = globals_dict.get("__name__", "") or ""
@@ -1144,6 +1147,45 @@ builtins.__vcon_original_import__("socket")
         let msg = format!("{err:#}");
         assert!(
             msg.contains("__vcon_original_import__") || msg.contains("outside SDK-facing APIs"),
+            "unexpected error: {msg}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&save_root);
+    }
+
+    #[test]
+    fn blocks_obfuscated_import_escape_at_runtime() {
+        let (root, entrypoint) = write_temp_entrypoint(
+            r#"
+import vcon
+imp = __builtins__["__im" + "port__"] if isinstance(__builtins__, dict) else getattr(__builtins__, "__im" + "port__")
+imp("socket")
+"#,
+        );
+        let save_root = std::env::temp_dir().join("vcon-runtime-save-test-obfuscated-bypass");
+        let _ = fs::remove_dir_all(&save_root);
+        let mut provider = ScriptedInputProvider::default();
+
+        let result = run_cartridge(
+            &entrypoint,
+            &root,
+            Path::new("../vcon-sdk"),
+            1,
+            1.0 / 60.0,
+            1280,
+            800,
+            &mut provider,
+            &save_root,
+            8,
+            None,
+            None,
+            ActiveRenderBackend::Software,
+        );
+        let err = result.expect_err("obfuscated bypass should fail");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("blocked network module") && msg.contains("socket"),
             "unexpected error: {msg}"
         );
 

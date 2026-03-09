@@ -8,12 +8,12 @@ Scope: Close all remaining V1 delivery gaps identified after Milestones 1-5.
 ## Progress Update (2026-03-05)
 
 - Stream A phase 1 implemented:
-  - Runtime render backend abstraction added (`auto`, `software`, `moderngl` request modes).
-  - `moderngl` capability probe with automatic fallback to software backend.
+  - Runtime render backend abstraction added (`auto`, `software`, `moderngl`, `wgpu` request modes).
+  - `wgpu` capability probe with automatic fallback to software backend.
   - Frame execution routed through a backend executor boundary.
   - Runtime reporting now exposes requested/active backend and fallback reason.
 - Remaining Stream A work:
-  - Actual windowed GPU presentation path and parity validation harness.
+  - Parity validation harness and performance telemetry hardening.
 
 ## 1. Goal
 
@@ -21,7 +21,7 @@ Ship a true V1 release candidate by closing current functional and validation ga
 
 ## 2. Gap Summary (Current State)
 
-1. Windowed GPU backend is not integrated (`moderngl` target remains planned).
+1. Windowed `wgpu` GPU backend has been integrated; parity/perf hardening remains.
 2. Controller mapping is limited to `move_x`, `move_y`, `A`, `Start`.
 3. No real OS-level controller hot-plug/reconnect behavior.
 4. Physics layer is custom and deterministic, but planned Box2D integration is not done.
@@ -33,17 +33,17 @@ Ship a true V1 release candidate by closing current functional and validation ga
 ## Stream A: Render Backend Completion
 
 ### Objectives
-- Integrate a windowed `moderngl` render backend.
+- Ship and harden the windowed `wgpu` render backend.
 - Keep software renderer as deterministic CI backend and fallback mode.
 
 ### Tasks
-- Add backend abstraction (`software`, `moderngl`) in runtime.
-- Implement `moderngl` presentation path at `1280x800 @ 60 FPS`.
+- Finalize backend abstraction (`software`, `wgpu`; deprecated `moderngl` compatibility path).
+- Validate `wgpu` presentation path at `1280x800 @ 60 FPS`.
 - Ensure draw-command parity between software and GPU backends.
 - Add headless fallback behavior when GPU/context init fails.
 
 ### Exit Criteria
-- Runtime can launch in windowed mode with `moderngl`.
+- Runtime can launch in windowed mode with `wgpu`.
 - Golden snapshot suite remains stable in software backend.
 - Backend parity tests pass for primitive command ordering and parameter handling.
 
@@ -131,7 +131,7 @@ Ship a true V1 release candidate by closing current functional and validation ga
 
 ## 6. Definition Of Done (Final V1)
 
-1. Windowed `moderngl` backend shipped with software fallback retained.
+1. Windowed `wgpu` backend shipped with software fallback retained (deprecated `moderngl` request path routed to software).
 2. Full controller mapping and hot-plug/reconnect behavior implemented and test-backed.
 3. Box2D-backed physics integrated with deterministic replay coverage.
 4. Audio device backend shipped with smoke/integration coverage.

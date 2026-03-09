@@ -8,6 +8,7 @@ mod audio_backend;
 mod gamepad;
 mod python_host;
 mod render_backend;
+mod wgpu_presenter;
 mod window_runtime;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -22,6 +23,7 @@ enum RenderBackendArg {
     Auto,
     Software,
     Moderngl,
+    Wgpu,
 }
 
 #[derive(Debug, Parser)]
@@ -92,6 +94,7 @@ fn main() -> Result<()> {
         RenderBackendArg::Auto => render_backend::RenderBackendRequest::Auto,
         RenderBackendArg::Software => render_backend::RenderBackendRequest::Software,
         RenderBackendArg::Moderngl => render_backend::RenderBackendRequest::Moderngl,
+        RenderBackendArg::Wgpu => render_backend::RenderBackendRequest::Wgpu,
     };
     let backend_selection = render_backend::select_render_backend(backend_request);
 
@@ -172,6 +175,12 @@ fn main() -> Result<()> {
         runtime_report.audio_underruns,
         runtime_report.audio_overruns,
         runtime_report.audio_dropped_buffers
+    );
+    println!(
+        "Render timing (us): cpu_render_total={} present_total={} pacing_anomalies={}",
+        runtime_report.render_cpu_micros_total,
+        runtime_report.present_micros_total,
+        runtime_report.frame_pacing_anomalies
     );
     if let Some(reason) = &backend_selection.fallback_reason {
         println!("Render backend fallback: {reason}");

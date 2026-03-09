@@ -24,7 +24,7 @@ _fps_smooth = 0.0
 
 
 def _reset_game():
-    global _snake, _snake_prev, _direction, _next_direction, _food
+    global _snake, _snake_prev, _direction, _next_direction
     global _score, _tick_accumulator, _tick_seconds, _game_over, _paused
     global _a_prev, _start_prev, _pause_prev, _fps_instant, _fps_smooth
     head_x = GRID_COLS // 2

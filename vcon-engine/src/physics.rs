@@ -223,7 +223,10 @@ impl PhysicsWorld {
         pairs
     }
 
-    fn build_collision_events(&mut self, collisions_now: HashSet<(NodeId, NodeId)>) -> Vec<CollisionEvent> {
+    fn build_collision_events(
+        &mut self,
+        collisions_now: HashSet<(NodeId, NodeId)>,
+    ) -> Vec<CollisionEvent> {
         let mut events = Vec::new();
         for pair in &collisions_now {
             if !self.active_collisions.contains(pair) {

@@ -7,12 +7,14 @@ for engine-side validation and submission.
 _frame_commands = []
 _surface_width = 1280
 _surface_height = 800
+_render_backend = "software"
 
 
-def _set_runtime_state(surface_width, surface_height):
-    global _surface_width, _surface_height
+def _set_runtime_state(surface_width, surface_height, render_backend="software"):
+    global _surface_width, _surface_height, _render_backend
     _surface_width = int(surface_width)
     _surface_height = int(surface_height)
+    _render_backend = str(render_backend)
 
 
 def begin_frame():
@@ -109,3 +111,7 @@ def surface_height():
 
 def surface_size():
     return (_surface_width, _surface_height)
+
+
+def render_backend():
+    return _render_backend

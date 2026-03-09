@@ -5,6 +5,14 @@ for engine-side validation and submission.
 """
 
 _frame_commands = []
+_surface_width = 1280
+_surface_height = 800
+
+
+def _set_runtime_state(surface_width, surface_height):
+    global _surface_width, _surface_height
+    _surface_width = int(surface_width)
+    _surface_height = int(surface_height)
 
 
 def begin_frame():
@@ -89,3 +97,15 @@ def text(value, x, y, size=16.0, color=(255, 255, 255, 255)):
             "color": tuple(color),
         }
     )
+
+
+def surface_width():
+    return _surface_width
+
+
+def surface_height():
+    return _surface_height
+
+
+def surface_size():
+    return (_surface_width, _surface_height)

@@ -116,6 +116,18 @@ impl RenderExecutor {
     pub fn dump_ppm(&self, path: &std::path::Path) -> Result<(), vcon_engine::RenderIoError> {
         self.surface.write_ppm(path)
     }
+
+    pub fn pixels_rgba(&self) -> &[u8] {
+        self.surface.pixels()
+    }
+
+    pub fn width(&self) -> u32 {
+        self.surface.width()
+    }
+
+    pub fn height(&self) -> u32 {
+        self.surface.height()
+    }
 }
 
 #[cfg(test)]

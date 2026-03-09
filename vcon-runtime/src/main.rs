@@ -4,10 +4,11 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use vcon_engine::boot_cartridge;
 
-mod gamepad;
 mod audio_backend;
+mod gamepad;
 mod python_host;
 mod render_backend;
+mod window_runtime;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum InputSourceArg {
@@ -48,6 +49,14 @@ struct Args {
     render_backend: RenderBackendArg,
     #[arg(long)]
     dump_frame: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    windowed: bool,
+    #[arg(long, default_value_t = 60)]
+    windowed_target_fps: u32,
+    #[arg(long)]
+    windowed_max_frames: Option<u32>,
+    #[arg(long, default_value = "vcon-runtime")]
+    window_title: String,
 }
 
 fn main() -> Result<()> {
@@ -86,21 +95,48 @@ fn main() -> Result<()> {
     };
     let backend_selection = render_backend::select_render_backend(backend_request);
 
-    let runtime_report = python_host::run_cartridge(
-        &report.entrypoint_path,
-        &args.cartridge,
-        &args.sdk_root,
-        args.frames,
-        args.dt_fixed,
-        args.width,
-        args.height,
-        input_provider,
-        &report.save_namespace.root,
-        report.save_namespace.quota_mb,
-        Some(&args.cartridge.join(&report.manifest.assets_path)),
-        args.dump_frame.as_deref(),
-        backend_selection.active,
-    )?;
+    let runtime_report = if args.windowed {
+        let (mut window_input, mut window_observer) = window_runtime::create_window_runtime(
+            &args.window_title,
+            args.width,
+            args.height,
+            args.windowed_target_fps,
+        )?;
+        python_host::run_cartridge_with_loop(
+            &report.entrypoint_path,
+            &args.cartridge,
+            &args.sdk_root,
+            python_host::FrameLoopMode::UntilStopped {
+                max_frames: args.windowed_max_frames,
+            },
+            args.dt_fixed,
+            args.width,
+            args.height,
+            &mut window_input,
+            &report.save_namespace.root,
+            report.save_namespace.quota_mb,
+            Some(&args.cartridge.join(&report.manifest.assets_path)),
+            args.dump_frame.as_deref(),
+            backend_selection.active,
+            Some(&mut window_observer),
+        )?
+    } else {
+        python_host::run_cartridge(
+            &report.entrypoint_path,
+            &args.cartridge,
+            &args.sdk_root,
+            args.frames,
+            args.dt_fixed,
+            args.width,
+            args.height,
+            input_provider,
+            &report.save_namespace.root,
+            report.save_namespace.quota_mb,
+            Some(&args.cartridge.join(&report.manifest.assets_path)),
+            args.dump_frame.as_deref(),
+            backend_selection.active,
+        )?
+    };
 
     if runtime_report.on_boot_called {
         println!("Invoked lifecycle callback: on_boot() [python]");

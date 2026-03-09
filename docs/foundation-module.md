@@ -199,8 +199,22 @@ Key options:
 - `--input-source`: `none`, `scripted`, or `gamepad`
 - `--input-seed`: deterministic seed for scripted input stream
 - `--dump-frame`: write final frame to `.ppm`
+- `--windowed`: run live loop in an OS window until closed (Esc exits)
+- `--windowed-target-fps`: windowed present target (default `60`)
+- `--windowed-max-frames`: optional frame cap for windowed mode
+- `--window-title`: title used for the windowed runtime window
 
 Current output includes lifecycle invocation and update/render call counts.
+
+Windowed snake demo:
+```bash
+cargo run -p vcon-runtime -- \
+  --cartridge cartridges/snake-demo \
+  --sdk-root vcon-sdk \
+  --windowed \
+  --width 1024 \
+  --height 720
+```
 
 ### `vcon-pack validate`
 Command:

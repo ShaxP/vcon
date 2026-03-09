@@ -9,6 +9,7 @@ authors.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 pyo3.workspace = true
+minifb = "0.27"
 vcon-engine = { path = "../vcon-engine" }
 
 [dev-dependencies]

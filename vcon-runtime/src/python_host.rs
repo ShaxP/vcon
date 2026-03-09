@@ -40,6 +40,22 @@ pub trait InputProvider {
     fn next_frame(&mut self, frame_idx: u32) -> InputFrame;
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum FrameLoopMode {
+    Fixed(u32),
+    UntilStopped { max_frames: Option<u32> },
+}
+
+pub trait FrameObserver {
+    fn on_frame(
+        &mut self,
+        frame_idx: u32,
+        frame_rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Result<bool>;
+}
+
 pub struct NoneInputProvider;
 
 impl InputProvider for NoneInputProvider {
@@ -147,6 +163,40 @@ pub fn run_cartridge(
     dump_frame_path: Option<&Path>,
     render_backend: ActiveRenderBackend,
 ) -> Result<RuntimeInvocationReport> {
+    run_cartridge_with_loop(
+        entrypoint_path,
+        cartridge_root,
+        sdk_root,
+        FrameLoopMode::Fixed(frames),
+        dt_fixed,
+        width,
+        height,
+        input_provider,
+        save_root,
+        save_quota_mb,
+        asset_dir,
+        dump_frame_path,
+        render_backend,
+        None,
+    )
+}
+
+pub fn run_cartridge_with_loop(
+    entrypoint_path: &Path,
+    cartridge_root: &Path,
+    sdk_root: &Path,
+    frame_loop_mode: FrameLoopMode,
+    dt_fixed: f64,
+    width: u32,
+    height: u32,
+    input_provider: &mut dyn InputProvider,
+    save_root: &Path,
+    save_quota_mb: u32,
+    asset_dir: Option<&Path>,
+    dump_frame_path: Option<&Path>,
+    render_backend: ActiveRenderBackend,
+    mut frame_observer: Option<&mut dyn FrameObserver>,
+) -> Result<RuntimeInvocationReport> {
     let source = fs::read_to_string(entrypoint_path).with_context(|| {
         format!(
             "failed to read python entrypoint at {}",
@@ -166,6 +216,7 @@ pub fn run_cartridge(
         configure_save_api(py, save_root, save_quota_mb)?;
         configure_physics_api(py)?;
         configure_audio_api(py)?;
+        configure_graphics_api(py, width, height)?;
 
         let module_name = format!(
             "cartridge_entry_{}",
@@ -193,7 +244,16 @@ pub fn run_cartridge(
 
         let mut executor = RenderExecutor::new(render_backend, width, height);
 
-        for frame_idx in 0..frames {
+        let mut frame_idx = 0_u32;
+        loop {
+            match frame_loop_mode {
+                FrameLoopMode::Fixed(total_frames) if frame_idx >= total_frames => break,
+                FrameLoopMode::UntilStopped {
+                    max_frames: Some(max),
+                } if frame_idx >= max => break,
+                _ => {}
+            }
+
             let input_frame = input_provider.next_frame(frame_idx);
             inject_input_state(py, &input_frame)?;
 
@@ -228,6 +288,19 @@ pub fn run_cartridge(
             let frame_stats: RenderStats = executor.render_frame(&frame_commands, assets.as_ref());
             draw_commands_rendered += frame_stats.commands_executed as u32;
             draw_commands_unsupported += frame_stats.commands_unsupported as u32;
+
+            if let Some(observer) = frame_observer.as_deref_mut() {
+                if !observer.on_frame(
+                    frame_idx,
+                    executor.pixels_rgba(),
+                    executor.width(),
+                    executor.height(),
+                )? {
+                    break;
+                }
+            }
+
+            frame_idx = frame_idx.saturating_add(1);
         }
 
         if let Some(path) = dump_frame_path {
@@ -308,6 +381,18 @@ fn configure_audio_api(py: Python<'_>) -> Result<()> {
         .context("vcon.audio._set_runtime_state not found")?
         .call1((active, health))
         .context("vcon.audio._set_runtime_state() failed")?;
+    Ok(())
+}
+
+fn configure_graphics_api(py: Python<'_>, width: u32, height: u32) -> Result<()> {
+    let graphics_mod = py
+        .import_bound("vcon.graphics")
+        .context("failed to import vcon.graphics")?;
+    graphics_mod
+        .getattr("_set_runtime_state")
+        .context("vcon.graphics._set_runtime_state not found")?
+        .call1((width, height))
+        .context("vcon.graphics._set_runtime_state() failed")?;
     Ok(())
 }
 

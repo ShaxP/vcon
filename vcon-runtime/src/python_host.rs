@@ -213,7 +213,8 @@ pub fn run_cartridge_with_loop(
         configure_save_api(py, save_root, save_quota_mb)?;
         configure_physics_api(py)?;
         configure_audio_api(py)?;
-        configure_graphics_api(py, width, height)?;
+        let mut executor = RenderExecutor::new(render_backend, width, height);
+        configure_graphics_api(py, width, height, executor.backend())?;
 
         let module_name = format!(
             "cartridge_entry_{}",
@@ -238,8 +239,6 @@ pub fn run_cartridge_with_loop(
         let mut draw_commands_unsupported = 0;
         let mut physics = RuntimePhysics::default();
         let mut audio = RuntimeAudio::default();
-
-        let mut executor = RenderExecutor::new(render_backend, width, height);
 
         let mut frame_idx = 0_u32;
         loop {
@@ -381,14 +380,19 @@ fn configure_audio_api(py: Python<'_>) -> Result<()> {
     Ok(())
 }
 
-fn configure_graphics_api(py: Python<'_>, width: u32, height: u32) -> Result<()> {
+fn configure_graphics_api(
+    py: Python<'_>,
+    width: u32,
+    height: u32,
+    render_backend: ActiveRenderBackend,
+) -> Result<()> {
     let graphics_mod = py
         .import_bound("vcon.graphics")
         .context("failed to import vcon.graphics")?;
     graphics_mod
         .getattr("_set_runtime_state")
         .context("vcon.graphics._set_runtime_state not found")?
-        .call1((width, height))
+        .call1((width, height, render_backend.as_str()))
         .context("vcon.graphics._set_runtime_state() failed")?;
     Ok(())
 }

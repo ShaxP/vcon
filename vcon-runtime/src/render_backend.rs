@@ -248,6 +248,7 @@ impl ModernglPostProcess {
 }
 
 const MODERNGL_POST_PROCESS_PY: &str = r#"
+import struct
 import moderngl
 
 
@@ -284,26 +285,13 @@ void main() {
 ''',
         )
 
-        self.vertex_buffer = self.ctx.buffer(
-            data=(
-                -1.0,
-                -1.0,
-                0.0,
-                0.0,
-                1.0,
-                -1.0,
-                1.0,
-                0.0,
-                -1.0,
-                1.0,
-                0.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-                1.0,
-            )
+        vertex_data = (
+            -1.0, -1.0, 0.0, 0.0,
+             1.0, -1.0, 1.0, 0.0,
+            -1.0,  1.0, 0.0, 1.0,
+             1.0,  1.0, 1.0, 1.0,
         )
+        self.vertex_buffer = self.ctx.buffer(data=struct.pack('16f', *vertex_data))
         self.vao = self.ctx.vertex_array(
             self.program,
             [(self.vertex_buffer, '2f 2f', 'in_pos', 'in_uv')],
@@ -324,7 +312,7 @@ void main() {
         self.ctx.viewport = (0, 0, self.width, self.height)
         self.src.use(location=0)
         self.vao.render(moderngl.TRIANGLE_STRIP)
-        return self.dst.read(components=4, alignment=1)
+        return self.dst.read(alignment=1)
 "#;
 
 #[cfg(test)]

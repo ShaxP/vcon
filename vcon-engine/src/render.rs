@@ -320,6 +320,14 @@ impl SoftwareFrame {
         &self.pixels
     }
 
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
     fn clear(&mut self, color: [u8; 4]) {
         for px in self.pixels.chunks_exact_mut(4) {
             px.copy_from_slice(&color);

@@ -82,7 +82,10 @@ imp("socket")
     );
 
     let output = run_runtime(&root);
-    assert!(!output.status.success(), "runtime must reject escape attempt");
+    assert!(
+        !output.status.success(),
+        "runtime must reject escape attempt"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(

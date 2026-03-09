@@ -56,7 +56,11 @@ impl SimulatedAudioDevice {
         }
 
         // Mixer submits output buffers. With active voices we submit two slices to keep headroom.
-        let submit = if active_voice_count > 0 { produced + 1 } else { produced };
+        let submit = if active_voice_count > 0 {
+            produced + 1
+        } else {
+            produced
+        };
         self.queued_buffers = self.queued_buffers.saturating_add(submit);
 
         if self.queued_buffers > self.max_queued_buffers {

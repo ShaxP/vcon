@@ -68,7 +68,11 @@ fn covers_connect_disconnect_reconnect_and_profile_remap_paths() {
     let f5 = provider.next_frame(5);
     assert!(f5.action_pressed("ControllerReconnected"));
     assert!(f5.action_pressed("ControllerConnectedState"));
-    assert_eq!(f5.axis("move_x"), 0.09, "steam deck profile should retain 0.09");
+    assert_eq!(
+        f5.axis("move_x"),
+        0.09,
+        "steam deck profile should retain 0.09"
+    );
 
     let _ = fs::remove_file(state_file);
 }

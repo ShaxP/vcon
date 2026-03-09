@@ -64,14 +64,9 @@ impl InputProvider for NoneInputProvider {
     }
 }
 
+#[derive(Default)]
 pub struct ScriptedInputProvider {
     seed: u64,
-}
-
-impl Default for ScriptedInputProvider {
-    fn default() -> Self {
-        Self { seed: 0 }
-    }
 }
 
 impl ScriptedInputProvider {
@@ -148,6 +143,7 @@ struct AudioRuntimeCommands {
     stop_all: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_cartridge(
     entrypoint_path: &Path,
     cartridge_root: &Path,
@@ -181,6 +177,7 @@ pub fn run_cartridge(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_cartridge_with_loop(
     entrypoint_path: &Path,
     cartridge_root: &Path,

@@ -1,10 +1,11 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use vcon_engine::{map_gamepad_state, InputFrame, InputProfile, RawGamepadState};
 
 use crate::python_host::InputProvider;
 
+#[allow(dead_code)]
 const DEFAULT_STATE_FILE: &str = "/tmp/vcon-gamepad-input.txt";
 const DEFAULT_DEBOUNCE_FRAMES: u8 = 2;
 
@@ -12,6 +13,7 @@ const DEFAULT_DEBOUNCE_FRAMES: u8 = 2;
 pub enum ControllerBackendKind {
     Scripted,
     File,
+    #[allow(dead_code)]
     OsNative,
 }
 
@@ -51,7 +53,7 @@ struct ScriptedControllerBackend;
 impl ControllerBackend for ScriptedControllerBackend {
     fn poll(&mut self, frame_idx: u32, fallback: &ControllerSample) -> ControllerSample {
         let stage = frame_idx % 120;
-        let connected = stage < 30 || stage >= 60;
+        let connected = !(30..60).contains(&stage);
         let profile = if stage < 60 {
             InputProfile::Desktop
         } else {
@@ -73,8 +75,12 @@ impl ControllerBackend for ScriptedControllerBackend {
         let mut raw = fallback.raw.clone();
         raw.left_x = (phase * std::f64::consts::TAU).sin().clamp(-1.0, 1.0);
         raw.left_y = (phase * std::f64::consts::TAU).cos().clamp(-1.0, 1.0);
-        raw.right_x = ((phase * 2.0) * std::f64::consts::TAU).sin().clamp(-1.0, 1.0);
-        raw.right_y = ((phase * 2.0) * std::f64::consts::TAU).cos().clamp(-1.0, 1.0);
+        raw.right_x = ((phase * 2.0) * std::f64::consts::TAU)
+            .sin()
+            .clamp(-1.0, 1.0);
+        raw.right_y = ((phase * 2.0) * std::f64::consts::TAU)
+            .cos()
+            .clamp(-1.0, 1.0);
         raw.dpad_right = dpad_right;
         raw.dpad_left = !dpad_right;
         raw.dpad_up = dpad_up;
@@ -134,6 +140,7 @@ pub struct GamepadInputProvider {
 }
 
 impl GamepadInputProvider {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         let backend_kind = detect_backend_kind();
         let state_file = std::env::var_os("VCON_GAMEPAD_STATE_FILE")
@@ -226,8 +233,14 @@ impl InputProvider for GamepadInputProvider {
             InputFrame::default()
         };
 
-        frame.set_action("ControllerConnectedState", state == ConnectionState::Connected);
-        frame.set_action("ControllerConnected", matches!(event, Some(ConnectionEvent::Connected)));
+        frame.set_action(
+            "ControllerConnectedState",
+            state == ConnectionState::Connected,
+        );
+        frame.set_action(
+            "ControllerConnected",
+            matches!(event, Some(ConnectionEvent::Connected)),
+        );
         frame.set_action(
             "ControllerDisconnected",
             matches!(event, Some(ConnectionEvent::Disconnected)),
@@ -241,6 +254,7 @@ impl InputProvider for GamepadInputProvider {
     }
 }
 
+#[allow(dead_code)]
 fn detect_backend_kind() -> ControllerBackendKind {
     match std::env::var("VCON_CONTROLLER_BACKEND") {
         Ok(value) if value.eq_ignore_ascii_case("scripted") => ControllerBackendKind::Scripted,
@@ -249,7 +263,10 @@ fn detect_backend_kind() -> ControllerBackendKind {
     }
 }
 
-fn build_backend(backend_kind: ControllerBackendKind, state_file: PathBuf) -> Box<dyn ControllerBackend> {
+fn build_backend(
+    backend_kind: ControllerBackendKind,
+    state_file: PathBuf,
+) -> Box<dyn ControllerBackend> {
     match backend_kind {
         ControllerBackendKind::Scripted => Box::new(ScriptedControllerBackend),
         ControllerBackendKind::File => Box::new(FileControllerBackend::new(state_file)),
@@ -421,8 +438,8 @@ fn parse_state_file(input: &str, previous: &ControllerSample) -> ControllerSampl
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_state_file, ConnectionEvent, ConnectionState, ControllerBackendKind, ControllerSample,
-        GamepadInputProvider,
+        parse_state_file, ConnectionEvent, ConnectionState, ControllerBackendKind,
+        ControllerSample, GamepadInputProvider,
     };
     use crate::python_host::InputProvider;
     use vcon_engine::{InputProfile, RawGamepadState};
@@ -525,9 +542,4 @@ mod tests {
         assert_eq!(state, ConnectionState::Disconnected);
         assert_eq!(event, Some(ConnectionEvent::Disconnected));
     }
-}
-
-#[allow(dead_code)]
-fn _state_file_exists(path: &Path) -> bool {
-    path.exists()
 }

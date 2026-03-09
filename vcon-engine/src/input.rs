@@ -1,18 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct InputFrame {
     axes: BTreeMap<String, f64>,
     actions: BTreeSet<String>,
-}
-
-impl Default for InputFrame {
-    fn default() -> Self {
-        Self {
-            axes: BTreeMap::new(),
-            actions: BTreeSet::new(),
-        }
-    }
 }
 
 impl InputFrame {

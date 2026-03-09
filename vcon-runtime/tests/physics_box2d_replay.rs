@@ -5,7 +5,8 @@ fn run_physics_demo_dump(path: &std::path::Path, frames: &str) {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let cartridge = workspace.join("cartridges/physics-demo");
     let sdk_root = workspace.join("vcon-sdk");
-    let saves_root = std::env::temp_dir().join(format!("vcon-runtime-physics-box2d-saves-{frames}"));
+    let saves_root =
+        std::env::temp_dir().join(format!("vcon-runtime-physics-box2d-saves-{frames}"));
 
     let output = Command::new(env!("CARGO_BIN_EXE_vcon-runtime"))
         .arg("--cartridge")

@@ -311,7 +311,7 @@ fn collect_cartridge_files(
             .collect::<std::io::Result<Vec<_>>>()
             .with_context(|| format!("failed reading directory entries for {}", dir.display()))?;
 
-        entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+        entries.sort_by_key(|a| a.file_name());
 
         for entry in entries {
             let path = entry.path();

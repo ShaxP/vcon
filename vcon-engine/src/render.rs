@@ -251,7 +251,7 @@ impl SoftwareFrame {
                     filled,
                     thickness,
                 } => {
-                    self.draw_rect(*x, *y, *w, *h, *color, *filled, *thickness);
+                    self.draw_rect((*x, *y), (*w, *h), *color, *filled, *thickness);
                     stats.commands_executed += 1;
                 }
                 DrawCommand::Circle {
@@ -374,14 +374,14 @@ impl SoftwareFrame {
 
     fn draw_rect(
         &mut self,
-        x: f64,
-        y: f64,
-        w: f64,
-        h: f64,
+        pos: (f64, f64),
+        size: (f64, f64),
         color: [u8; 4],
         filled: bool,
         thickness: f64,
     ) {
+        let (x, y) = pos;
+        let (w, h) = size;
         let x0 = x.round() as i32;
         let y0 = y.round() as i32;
         let x1 = (x + w).round() as i32;

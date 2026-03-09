@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use pyo3::prelude::*;
@@ -33,6 +34,9 @@ pub struct RuntimeInvocationReport {
     pub audio_underruns: u64,
     pub audio_overruns: u64,
     pub audio_dropped_buffers: u64,
+    pub render_cpu_micros_total: u64,
+    pub present_micros_total: u64,
+    pub frame_pacing_anomalies: u32,
     pub on_shutdown_called: bool,
 }
 
@@ -237,6 +241,14 @@ pub fn run_cartridge_with_loop(
         let mut draw_commands_submitted = 0;
         let mut draw_commands_rendered = 0;
         let mut draw_commands_unsupported = 0;
+        let mut render_cpu_micros_total = 0_u64;
+        let mut present_micros_total = 0_u64;
+        let mut frame_pacing_anomalies = 0_u32;
+        let frame_budget_micros = if dt_fixed > 0.0 {
+            Some((dt_fixed * 1_000_000.0) as u64)
+        } else {
+            None
+        };
         let mut physics = RuntimePhysics::default();
         let mut audio = RuntimeAudio::default();
 
@@ -281,11 +293,16 @@ pub fn run_cartridge_with_loop(
             let frame_commands = drain_and_validate_render_commands(py)?;
             draw_commands_submitted += frame_commands.commands.len() as u32;
 
+            let render_start = Instant::now();
             let frame_stats: RenderStats = executor.render_frame(&frame_commands, assets.as_ref());
+            let render_micros = render_start.elapsed().as_micros() as u64;
+            render_cpu_micros_total = render_cpu_micros_total.saturating_add(render_micros);
             draw_commands_rendered += frame_stats.commands_executed as u32;
             draw_commands_unsupported += frame_stats.commands_unsupported as u32;
 
+            let mut present_micros = 0_u64;
             if let Some(observer) = frame_observer.as_deref_mut() {
+                let present_start = Instant::now();
                 if !observer.on_frame(
                     frame_idx,
                     executor.pixels_rgba(),
@@ -293,6 +310,15 @@ pub fn run_cartridge_with_loop(
                     executor.height(),
                 )? {
                     break;
+                }
+                present_micros = present_start.elapsed().as_micros() as u64;
+                present_micros_total = present_micros_total.saturating_add(present_micros);
+            }
+
+            if let Some(frame_budget_micros) = frame_budget_micros {
+                let frame_work_micros = render_micros.saturating_add(present_micros);
+                if frame_work_micros > frame_budget_micros {
+                    frame_pacing_anomalies = frame_pacing_anomalies.saturating_add(1);
                 }
             }
 
@@ -321,6 +347,9 @@ pub fn run_cartridge_with_loop(
             audio_underruns: audio_health.underruns,
             audio_overruns: audio_health.overruns,
             audio_dropped_buffers: audio_health.dropped_buffers,
+            render_cpu_micros_total,
+            present_micros_total,
+            frame_pacing_anomalies,
             on_shutdown_called,
         })
     })

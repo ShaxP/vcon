@@ -10,6 +10,9 @@ anyhow.workspace = true
 clap.workspace = true
 pyo3.workspace = true
 minifb = "0.27"
+pollster = "0.4"
+wgpu = "0.20"
+winit = "0.30"
 vcon-engine = { path = "../vcon-engine" }
 
 [dev-dependencies]

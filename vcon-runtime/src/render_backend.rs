@@ -1,21 +1,23 @@
 use std::io::Write;
 
-use anyhow::{Context, Result};
-use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use anyhow::{bail, Result};
 use vcon_engine::{AssetStore, FrameCommandBuffer, RenderStats, SoftwareFrame};
+
+use crate::wgpu_presenter::{probe_wgpu_support, WgpuPresenter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderBackendRequest {
     Auto,
     Software,
     Moderngl,
+    Wgpu,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveRenderBackend {
     Software,
     Moderngl,
+    Wgpu,
 }
 
 impl ActiveRenderBackend {
@@ -23,6 +25,7 @@ impl ActiveRenderBackend {
         match self {
             ActiveRenderBackend::Software => "software",
             ActiveRenderBackend::Moderngl => "moderngl",
+            ActiveRenderBackend::Wgpu => "wgpu",
         }
     }
 }
@@ -35,12 +38,12 @@ pub struct RenderBackendSelection {
 }
 
 pub fn select_render_backend(requested: RenderBackendRequest) -> RenderBackendSelection {
-    select_render_backend_with_probe(requested, probe_moderngl_support())
+    select_render_backend_with_probe(requested, probe_wgpu_support())
 }
 
 fn select_render_backend_with_probe(
     requested: RenderBackendRequest,
-    probe: Result<(), String>,
+    wgpu_probe: std::result::Result<(), String>,
 ) -> RenderBackendSelection {
     match requested {
         RenderBackendRequest::Software => RenderBackendSelection {
@@ -48,10 +51,10 @@ fn select_render_backend_with_probe(
             active: ActiveRenderBackend::Software,
             fallback_reason: None,
         },
-        RenderBackendRequest::Moderngl => match probe {
+        RenderBackendRequest::Wgpu => match wgpu_probe {
             Ok(()) => RenderBackendSelection {
                 requested,
-                active: ActiveRenderBackend::Moderngl,
+                active: ActiveRenderBackend::Wgpu,
                 fallback_reason: None,
             },
             Err(reason) => RenderBackendSelection {
@@ -60,10 +63,18 @@ fn select_render_backend_with_probe(
                 fallback_reason: Some(reason),
             },
         },
-        RenderBackendRequest::Auto => match probe {
+        RenderBackendRequest::Moderngl => RenderBackendSelection {
+            requested,
+            active: ActiveRenderBackend::Software,
+            fallback_reason: Some(
+                "moderngl backend is deprecated and disabled; use --render-backend wgpu or software"
+                    .to_owned(),
+            ),
+        },
+        RenderBackendRequest::Auto => match wgpu_probe {
             Ok(()) => RenderBackendSelection {
                 requested,
-                active: ActiveRenderBackend::Moderngl,
+                active: ActiveRenderBackend::Wgpu,
                 fallback_reason: None,
             },
             Err(reason) => RenderBackendSelection {
@@ -75,47 +86,40 @@ fn select_render_backend_with_probe(
     }
 }
 
-fn probe_moderngl_support() -> Result<(), String> {
-    Python::with_gil(|py| {
-        let moderngl = py
-            .import_bound("moderngl")
-            .map_err(|err| format!("failed to import moderngl: {err}"))?;
-        moderngl
-            .getattr("create_standalone_context")
-            .map_err(|err| format!("moderngl missing create_standalone_context: {err}"))?
-            .call0()
-            .map_err(|err| format!("failed to initialize moderngl context: {err}"))?;
-        Ok(())
-    })
-}
-
 pub struct RenderExecutor {
     backend: ActiveRenderBackend,
     surface: SoftwareFrame,
-    gpu_post: Option<ModernglPostProcess>,
+    gpu_post: Option<WgpuPostProcess>,
 }
 
 impl RenderExecutor {
     pub fn new(backend: ActiveRenderBackend, width: u32, height: u32) -> Self {
         let surface = SoftwareFrame::new(width, height);
-        let gpu_post = if backend == ActiveRenderBackend::Moderngl {
-            match ModernglPostProcess::new(width, height) {
+        let gpu_post = match backend {
+            ActiveRenderBackend::Wgpu => match WgpuPostProcess::new(width, height) {
                 Ok(state) => Some(state),
                 Err(err) => {
                     eprintln!(
-                        "Render backend fallback: moderngl runtime unavailable ({err:#}); using software"
+                        "Render backend fallback: wgpu runtime unavailable ({err:#}); using software"
                     );
                     None
                 }
+            },
+            ActiveRenderBackend::Moderngl => {
+                eprintln!(
+                    "Render backend fallback: moderngl backend is deprecated and disabled; using software"
+                );
+                None
             }
-        } else {
-            None
+            ActiveRenderBackend::Software => None,
         };
 
-        let active_backend = if gpu_post.is_some() {
-            backend
-        } else {
+        let active_backend = if backend == ActiveRenderBackend::Wgpu && gpu_post.is_none() {
             ActiveRenderBackend::Software
+        } else if backend == ActiveRenderBackend::Moderngl {
+            ActiveRenderBackend::Software
+        } else {
+            backend
         };
 
         Self {
@@ -139,7 +143,7 @@ impl RenderExecutor {
         if let Some(gpu) = self.gpu_post.as_mut() {
             if let Err(err) = gpu.process(self.surface.pixels()) {
                 eprintln!(
-                    "Render backend fallback: moderngl frame processing failed ({err:#}); using software"
+                    "Render backend fallback: wgpu frame processing failed ({err:#}); using software"
                 );
                 self.gpu_post = None;
                 self.backend = ActiveRenderBackend::Software;
@@ -170,10 +174,9 @@ impl RenderExecutor {
     }
 
     pub fn pixels_rgba(&self) -> &[u8] {
-        if let Some(gpu) = self.gpu_post.as_ref() {
-            gpu.pixels()
-        } else {
-            self.surface.pixels()
+        match self.gpu_post.as_ref() {
+            Some(state) => state.pixels(),
+            None => self.surface.pixels(),
         }
     }
 
@@ -186,134 +189,40 @@ impl RenderExecutor {
     }
 }
 
-struct ModernglPostProcess {
-    renderer: Py<PyAny>,
+struct WgpuPostProcess {
+    presenter: WgpuPresenter,
     pixels: Vec<u8>,
 }
 
-impl ModernglPostProcess {
+impl WgpuPostProcess {
     fn new(width: u32, height: u32) -> Result<Self> {
-        let renderer = Python::with_gil(|py| -> Result<Py<PyAny>> {
-            let module = PyModule::from_code_bound(
-                py,
-                MODERNGL_POST_PROCESS_PY,
-                "vcon_moderngl_post.py",
-                "vcon_moderngl_post",
-            )
-            .context("failed to compile moderngl post-process module")?;
-            let class = module
-                .getattr("ModernglPostProcess")
-                .context("moderngl post-process class missing")?;
-            let instance = class
-                .call1((width, height))
-                .context("failed to initialize moderngl post-process")?;
-            Ok(instance.unbind())
-        })?;
-
+        let presenter = WgpuPresenter::new(width, height)?;
         let expected_len = (width as usize)
             .saturating_mul(height as usize)
             .saturating_mul(4);
         Ok(Self {
-            renderer,
+            presenter,
             pixels: vec![0_u8; expected_len],
         })
     }
 
     fn process(&mut self, rgba_pixels: &[u8]) -> Result<()> {
-        Python::with_gil(|py| -> Result<()> {
-            let renderer = self.renderer.bind(py);
-            let input = PyBytes::new_bound(py, rgba_pixels);
-            let output = renderer
-                .call_method1("process_rgba", (input,))
-                .context("moderngl process_rgba call failed")?;
-            let bytes = output
-                .downcast_into::<PyBytes>()
-                .map_err(|_| anyhow::anyhow!("process_rgba must return bytes"))?;
-            let out = bytes.as_bytes();
-            if out.len() != self.pixels.len() {
-                anyhow::bail!(
-                    "moderngl process_rgba output size mismatch: expected {}, got {}",
-                    self.pixels.len(),
-                    out.len()
-                );
-            }
-            self.pixels.copy_from_slice(out);
-            Ok(())
-        })
+        if rgba_pixels.len() != self.pixels.len() {
+            bail!(
+                "wgpu process_rgba input size mismatch: expected {}, got {}",
+                self.pixels.len(),
+                rgba_pixels.len()
+            );
+        }
+        self.presenter.upload_rgba(rgba_pixels)?;
+        self.pixels.copy_from_slice(rgba_pixels);
+        Ok(())
     }
 
     fn pixels(&self) -> &[u8] {
         &self.pixels
     }
 }
-
-const MODERNGL_POST_PROCESS_PY: &str = r#"
-import struct
-import moderngl
-
-
-class ModernglPostProcess:
-    def __init__(self, width, height):
-        self.width = int(width)
-        self.height = int(height)
-        self.expected_size = self.width * self.height * 4
-
-        self.ctx = moderngl.create_standalone_context()
-        self.src = self.ctx.texture((self.width, self.height), 4, dtype='f1')
-        self.dst = self.ctx.texture((self.width, self.height), 4, dtype='f1')
-        self.fbo = self.ctx.framebuffer(color_attachments=[self.dst])
-
-        self.program = self.ctx.program(
-            vertex_shader='''
-#version 330
-in vec2 in_pos;
-in vec2 in_uv;
-out vec2 v_uv;
-void main() {
-    v_uv = in_uv;
-    gl_Position = vec4(in_pos, 0.0, 1.0);
-}
-''',
-            fragment_shader='''
-#version 330
-uniform sampler2D src_tex;
-in vec2 v_uv;
-out vec4 f_color;
-void main() {
-    f_color = texture(src_tex, v_uv);
-}
-''',
-        )
-
-        vertex_data = (
-            -1.0, -1.0, 0.0, 0.0,
-             1.0, -1.0, 1.0, 0.0,
-            -1.0,  1.0, 0.0, 1.0,
-             1.0,  1.0, 1.0, 1.0,
-        )
-        self.vertex_buffer = self.ctx.buffer(data=struct.pack('16f', *vertex_data))
-        self.vao = self.ctx.vertex_array(
-            self.program,
-            [(self.vertex_buffer, '2f 2f', 'in_pos', 'in_uv')],
-        )
-
-        self.src.filter = (moderngl.NEAREST, moderngl.NEAREST)
-        self.dst.filter = (moderngl.NEAREST, moderngl.NEAREST)
-
-    def process_rgba(self, rgba):
-        if len(rgba) != self.expected_size:
-            raise ValueError(
-                f'invalid input size: expected {self.expected_size}, got {len(rgba)}'
-            )
-
-        self.src.write(rgba)
-        self.fbo.use()
-        self.ctx.disable(moderngl.BLEND)
-        self.ctx.viewport = (0, 0, self.width, self.height)
-        self.src.use(location=0)
-        self.vao.render(moderngl.TRIANGLE_STRIP)
-        return self.dst.read(alignment=1)
-"#;
 
 #[cfg(test)]
 mod tests {
@@ -330,13 +239,17 @@ mod tests {
     }
 
     #[test]
-    fn auto_or_moderngl_always_resolve_to_supported_backend() {
-        for request in [RenderBackendRequest::Auto, RenderBackendRequest::Moderngl] {
+    fn auto_or_gpu_requests_always_resolve_to_supported_backend() {
+        for request in [
+            RenderBackendRequest::Auto,
+            RenderBackendRequest::Moderngl,
+            RenderBackendRequest::Wgpu,
+        ] {
             let selection = select_render_backend(request);
             assert!(
                 matches!(
                     selection.active,
-                    ActiveRenderBackend::Software | ActiveRenderBackend::Moderngl
+                    ActiveRenderBackend::Software | ActiveRenderBackend::Wgpu
                 ),
                 "selection must always resolve to a runnable backend"
             );
@@ -344,23 +257,30 @@ mod tests {
     }
 
     #[test]
-    fn moderngl_request_falls_back_to_software_when_probe_fails() {
-        let selection = select_render_backend_with_probe(
-            RenderBackendRequest::Moderngl,
-            Err("missing GL".to_owned()),
-        );
-        assert_eq!(selection.active, ActiveRenderBackend::Software);
-        assert_eq!(selection.fallback_reason.as_deref(), Some("missing GL"));
-    }
-
-    #[test]
-    fn auto_request_falls_back_with_auto_prefix() {
-        let selection =
-            select_render_backend_with_probe(RenderBackendRequest::Auto, Err("no context".into()));
+    fn moderngl_request_is_deprecated_and_falls_back_to_software() {
+        let selection = select_render_backend_with_probe(RenderBackendRequest::Moderngl, Ok(()));
         assert_eq!(selection.active, ActiveRenderBackend::Software);
         assert_eq!(
             selection.fallback_reason.as_deref(),
-            Some("auto fallback: no context")
+            Some("moderngl backend is deprecated and disabled; use --render-backend wgpu or software")
+        );
+    }
+
+    #[test]
+    fn wgpu_request_uses_wgpu_when_probe_succeeds() {
+        let selection = select_render_backend_with_probe(RenderBackendRequest::Wgpu, Ok(()));
+        assert_eq!(selection.active, ActiveRenderBackend::Wgpu);
+        assert!(selection.fallback_reason.is_none());
+    }
+
+    #[test]
+    fn auto_request_falls_back_to_software_when_wgpu_probe_fails() {
+        let selection =
+            select_render_backend_with_probe(RenderBackendRequest::Auto, Err("no adapter".into()));
+        assert_eq!(selection.active, ActiveRenderBackend::Software);
+        assert_eq!(
+            selection.fallback_reason.as_deref(),
+            Some("auto fallback: no adapter")
         );
     }
 }

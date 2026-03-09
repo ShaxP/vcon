@@ -3,6 +3,9 @@ import vcon
 GRID_COLUMNS = 60
 GRID_ROWS = 32
 INITIAL_SEED = 1337
+INITIAL_SNAKE_SPEED = 50
+MAX_SNAKE_SPEED = 100
+SNAKE_SPEED_INCREMENT = 5
 
 
 class Layout:
@@ -39,7 +42,7 @@ class Snake:
         self.body = [(start_x, start_y), (start_x - 1, start_y), (start_x - 2, start_y)]
         self.direction = (1, 0)
         self.queued_direction = (1, 0)
-        self.move_interval_seconds = 0.045
+        self.speed_cells_per_second = INITIAL_SNAKE_SPEED
 
     @staticmethod
     def is_opposite(first_direction, second_direction) -> bool:
@@ -68,7 +71,14 @@ class Snake:
             self.body.pop()
 
     def increase_speed(self) -> None:
-        self.move_interval_seconds = max(0.02, self.move_interval_seconds - 0.008)
+        self.speed_cells_per_second = min(
+            MAX_SNAKE_SPEED,
+            self.speed_cells_per_second + SNAKE_SPEED_INCREMENT,
+        )
+
+    @property
+    def move_interval_seconds(self) -> float:
+        return 1.0 / max(1, self.speed_cells_per_second)
 
 
 class SnakeGame:
@@ -210,6 +220,86 @@ class SnakeGame:
             board_height=board_height,
         )
 
+    @staticmethod
+    def draw_rounded_rect(x: float, y: float, width: float, height: float, radius: float, color) -> None:
+        corner_radius = max(0.0, min(radius, width * 0.5, height * 0.5))
+        if corner_radius <= 0.0:
+            vcon.graphics.rect(x, y, width, height, color, filled=True)
+            return
+
+        center_width = width - (corner_radius * 2.0)
+        center_height = height - (corner_radius * 2.0)
+        if center_width > 0.0:
+            vcon.graphics.rect(x + corner_radius, y, center_width, height, color, filled=True)
+        if center_height > 0.0:
+            vcon.graphics.rect(x, y + corner_radius, width, center_height, color, filled=True)
+
+        vcon.graphics.circle(x + corner_radius, y + corner_radius, corner_radius, color, filled=True)
+        vcon.graphics.circle(
+            x + width - corner_radius, y + corner_radius, corner_radius, color, filled=True
+        )
+        vcon.graphics.circle(
+            x + corner_radius, y + height - corner_radius, corner_radius, color, filled=True
+        )
+        vcon.graphics.circle(
+            x + width - corner_radius,
+            y + height - corner_radius,
+            corner_radius,
+            color,
+            filled=True,
+        )
+
+    def draw_head_eyes(
+        self,
+        center_x: float,
+        center_y: float,
+        head_width: float,
+        head_height: float,
+    ) -> None:
+        direction_x, direction_y = self.snake.direction
+        if direction_x == 0 and direction_y == 0:
+            direction_x = 1
+
+        forward_offset = min(head_width, head_height) * 0.16
+        side_offset = min(head_width, head_height) * 0.18
+        eye_radius = max(1.0, min(head_width, head_height) * 0.10)
+        pupil_radius = max(1.0, eye_radius * 0.45)
+
+        perpendicular_x = -direction_y
+        perpendicular_y = direction_x
+
+        left_eye_x = (
+            center_x
+            + (direction_x * forward_offset)
+            + (perpendicular_x * side_offset)
+        )
+        left_eye_y = (
+            center_y
+            + (direction_y * forward_offset)
+            + (perpendicular_y * side_offset)
+        )
+        right_eye_x = (
+            center_x
+            + (direction_x * forward_offset)
+            - (perpendicular_x * side_offset)
+        )
+        right_eye_y = (
+            center_y
+            + (direction_y * forward_offset)
+            - (perpendicular_y * side_offset)
+        )
+
+        pupil_forward = eye_radius * 0.28
+        for eye_x, eye_y in ((left_eye_x, left_eye_y), (right_eye_x, right_eye_y)):
+            vcon.graphics.circle(eye_x, eye_y, eye_radius, (245, 255, 245, 255), filled=True)
+            vcon.graphics.circle(
+                eye_x + (direction_x * pupil_forward),
+                eye_y + (direction_y * pupil_forward),
+                pupil_radius,
+                (20, 30, 20, 255),
+                filled=True,
+            )
+
     def render(self) -> None:
         layout = self.compute_layout()
 
@@ -247,20 +337,114 @@ class SnakeGame:
             draw_x = layout.board_x + (segment[0] * layout.cell_size)
             draw_y = layout.board_y + (segment[1] * layout.cell_size)
             segment_color = (90, 220, 140, 255) if index == 0 else (50, 165, 105, 255)
-            inset = max(1, layout.cell_size // (8 if index == 0 else 6))
-            vcon.graphics.rect(
-                draw_x + inset,
-                draw_y + inset,
-                layout.cell_size - (inset * 2),
-                layout.cell_size - (inset * 2),
+            segment_direction = self.snake.direction
+
+            if index == 0:
+                if abs(segment_direction[0]) >= abs(segment_direction[1]):
+                    head_width = layout.cell_size * 1.04
+                    head_height = layout.cell_size * 0.86
+                else:
+                    head_width = layout.cell_size * 0.86
+                    head_height = layout.cell_size * 1.04
+
+                head_x = draw_x + ((layout.cell_size - head_width) * 0.5)
+                head_y = draw_y + ((layout.cell_size - head_height) * 0.5)
+                self.draw_rounded_rect(
+                    head_x,
+                    head_y,
+                    head_width,
+                    head_height,
+                    min(head_width, head_height) * 0.24,
+                    segment_color,
+                )
+                self.draw_head_eyes(
+                    head_x + (head_width * 0.5),
+                    head_y + (head_height * 0.5),
+                    head_width,
+                    head_height,
+                )
+                continue
+
+            previous_segment = self.snake.body[index - 1]
+            next_segment = self.snake.body[index + 1] if index + 1 < len(self.snake.body) else None
+            to_previous = (previous_segment[0] - segment[0], previous_segment[1] - segment[1])
+            to_next = (
+                (next_segment[0] - segment[0], next_segment[1] - segment[1])
+                if next_segment is not None
+                else None
+            )
+            is_bend = (
+                to_next is not None
+                and to_previous[0] != 0
+                and to_next[1] != 0
+            ) or (
+                to_next is not None
+                and to_previous[1] != 0
+                and to_next[0] != 0
+            )
+
+            if is_bend:
+                center_x = draw_x + (layout.cell_size * 0.5)
+                center_y = draw_y + (layout.cell_size * 0.5)
+                core_size = layout.cell_size * 0.68
+                core_x = center_x - (core_size * 0.5)
+                core_y = center_y - (core_size * 0.5)
+                self.draw_rounded_rect(
+                    core_x,
+                    core_y,
+                    core_size,
+                    core_size,
+                    core_size * 0.38,
+                    segment_color,
+                )
+
+                arm_length = layout.cell_size * 0.56
+                arm_thickness = layout.cell_size * 0.62
+                for direction_x, direction_y in (to_previous, to_next):
+                    if direction_x != 0:
+                        arm_width = arm_length
+                        arm_height = arm_thickness
+                        arm_x = center_x + (direction_x * (layout.cell_size * 0.25)) - (arm_width * 0.5)
+                        arm_y = center_y - (arm_height * 0.5)
+                    else:
+                        arm_width = arm_thickness
+                        arm_height = arm_length
+                        arm_x = center_x - (arm_width * 0.5)
+                        arm_y = center_y + (direction_y * (layout.cell_size * 0.25)) - (arm_height * 0.5)
+                    self.draw_rounded_rect(
+                        arm_x,
+                        arm_y,
+                        arm_width,
+                        arm_height,
+                        min(arm_width, arm_height) * 0.42,
+                        segment_color,
+                    )
+                continue
+
+            straight_direction = to_previous if to_previous != (0, 0) else (1, 0)
+            body_length_factor = 1.06
+            body_thickness_factor = 0.70
+            if abs(straight_direction[0]) >= abs(straight_direction[1]):
+                segment_width = layout.cell_size * body_length_factor
+                segment_height = layout.cell_size * body_thickness_factor
+            else:
+                segment_width = layout.cell_size * body_thickness_factor
+                segment_height = layout.cell_size * body_length_factor
+
+            body_x = draw_x + ((layout.cell_size - segment_width) * 0.5)
+            body_y = draw_y + ((layout.cell_size - segment_height) * 0.5)
+            self.draw_rounded_rect(
+                body_x,
+                body_y,
+                segment_width,
+                segment_height,
+                min(segment_width, segment_height) * 0.35,
                 segment_color,
             )
 
         title_y = max(16, layout.board_y - 62)
         stats_y = title_y + 34
         info_y = layout.board_y + layout.board_height + 12
-        speed_cells_per_second = int((1.0 / self.snake.move_interval_seconds) + 0.5)
-
         vcon.graphics.text(
             "SNAKE DEMO",
             layout.board_x,
@@ -269,7 +453,7 @@ class SnakeGame:
             color=(235, 245, 255, 255),
         )
         vcon.graphics.text(
-            f"Score: {self.score}   Best: {self.best_score}   Speed: {speed_cells_per_second}",
+            f"Score: {self.score}   Best: {self.best_score}   Speed: {self.snake.speed_cells_per_second}",
             layout.board_x,
             stats_y,
             size=18,

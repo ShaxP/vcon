@@ -413,22 +413,32 @@ impl SoftwareFrame {
         filled: bool,
         thickness: f64,
     ) {
-        let cx = x.round() as i32;
-        let cy = y.round() as i32;
-        let radius = r.round() as i32;
-
         if filled {
-            let r2 = radius * radius;
-            for yy in (cy - radius)..=(cy + radius) {
-                for xx in (cx - radius)..=(cx + radius) {
-                    let dx = xx - cx;
-                    let dy = yy - cy;
-                    if dx * dx + dy * dy <= r2 {
-                        self.put_pixel(xx, yy, color);
+            let center_x = x;
+            let center_y = y;
+            let radius = r.max(0.0);
+            let min_x = (center_x - radius - 1.0).floor() as i32;
+            let max_x = (center_x + radius + 1.0).ceil() as i32;
+            let min_y = (center_y - radius - 1.0).floor() as i32;
+            let max_y = (center_y + radius + 1.0).ceil() as i32;
+
+            for yy in min_y..=max_y {
+                for xx in min_x..=max_x {
+                    let sample_x = xx as f64 + 0.5;
+                    let sample_y = yy as f64 + 0.5;
+                    let dx = sample_x - center_x;
+                    let dy = sample_y - center_y;
+                    let distance = (dx * dx + dy * dy).sqrt();
+                    let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0);
+                    if coverage > 0.0 {
+                        self.blend_pixel(xx, yy, color, coverage);
                     }
                 }
             }
         } else {
+            let cx = x.round() as i32;
+            let cy = y.round() as i32;
+            let radius = r.round() as i32;
             let t = (thickness.round() as i32).max(1);
             let outer = radius;
             let inner = (radius - t).max(0);
@@ -537,6 +547,47 @@ impl SoftwareFrame {
 
         let idx = ((y as usize) * (self.width as usize) + (x as usize)) * 4;
         self.pixels[idx..idx + 4].copy_from_slice(&color);
+    }
+
+    fn blend_pixel(&mut self, x: i32, y: i32, color: [u8; 4], coverage: f64) {
+        if x < 0 || y < 0 {
+            return;
+        }
+        let x = x as u32;
+        let y = y as u32;
+        if x >= self.width || y >= self.height {
+            return;
+        }
+
+        let src_alpha = ((color[3] as f64 / 255.0) * coverage).clamp(0.0, 1.0);
+        if src_alpha <= 0.0 {
+            return;
+        }
+
+        let idx = ((y as usize) * (self.width as usize) + (x as usize)) * 4;
+        let dst_r = self.pixels[idx] as f64 / 255.0;
+        let dst_g = self.pixels[idx + 1] as f64 / 255.0;
+        let dst_b = self.pixels[idx + 2] as f64 / 255.0;
+        let dst_a = self.pixels[idx + 3] as f64 / 255.0;
+
+        let out_a = src_alpha + (dst_a * (1.0 - src_alpha));
+        if out_a <= 0.0 {
+            self.pixels[idx..idx + 4].copy_from_slice(&[0, 0, 0, 0]);
+            return;
+        }
+
+        let src_r = color[0] as f64 / 255.0;
+        let src_g = color[1] as f64 / 255.0;
+        let src_b = color[2] as f64 / 255.0;
+
+        let out_r = ((src_r * src_alpha) + (dst_r * dst_a * (1.0 - src_alpha))) / out_a;
+        let out_g = ((src_g * src_alpha) + (dst_g * dst_a * (1.0 - src_alpha))) / out_a;
+        let out_b = ((src_b * src_alpha) + (dst_b * dst_a * (1.0 - src_alpha))) / out_a;
+
+        self.pixels[idx] = (out_r * 255.0).clamp(0.0, 255.0) as u8;
+        self.pixels[idx + 1] = (out_g * 255.0).clamp(0.0, 255.0) as u8;
+        self.pixels[idx + 2] = (out_b * 255.0).clamp(0.0, 255.0) as u8;
+        self.pixels[idx + 3] = (out_a * 255.0).clamp(0.0, 255.0) as u8;
     }
 }
 

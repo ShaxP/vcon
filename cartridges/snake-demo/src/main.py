@@ -534,27 +534,22 @@ class SnakeGame:
                 color=(220, 230, 240, 255),
             )
 
-
-def get_game() -> SnakeGame:
-    if not hasattr(get_game, "instance"):
-        get_game.instance = SnakeGame()
-    return get_game.instance
+game = SnakeGame()
 
 
 def on_boot():
-    game = get_game()
     game.reset()
     print(f"Snake demo render backend: {vcon.graphics.render_backend()}")
     return None
 
 
 def on_update(dt_fixed):
-    get_game().update(dt_fixed)
+    game.update(dt_fixed)
     return None
 
 
 def on_render(_):
-    get_game().render()
+    game.render()
     return None
 
 

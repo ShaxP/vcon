@@ -6,19 +6,9 @@ use crate::sandbox::{scan_entrypoint_source, validate_manifest_permissions};
 use crate::storage::{SaveNamespace, StorageError};
 
 #[derive(Debug, Clone)]
-pub struct LifecycleAvailability {
-    pub on_boot: bool,
-    pub on_update: bool,
-    pub on_render: bool,
-    pub on_event: bool,
-    pub on_shutdown: bool,
-}
-
-#[derive(Debug, Clone)]
 pub struct BootReport {
     pub manifest: Manifest,
     pub entrypoint_path: PathBuf,
-    pub lifecycle: LifecycleAvailability,
     pub save_namespace: SaveNamespace,
 }
 
@@ -59,20 +49,11 @@ pub fn boot_cartridge(cartridge_dir: &Path, saves_root: &Path) -> Result<BootRep
         return Err(EngineError::Policy(messages));
     }
 
-    let lifecycle = LifecycleAvailability {
-        on_boot: entrypoint_source.contains("def on_boot("),
-        on_update: entrypoint_source.contains("def on_update("),
-        on_render: entrypoint_source.contains("def on_render("),
-        on_event: entrypoint_source.contains("def on_event("),
-        on_shutdown: entrypoint_source.contains("def on_shutdown("),
-    };
-
     let save_namespace = SaveNamespace::from_manifest(saves_root, &manifest)?;
 
     Ok(BootReport {
         manifest,
         entrypoint_path,
-        lifecycle,
         save_namespace,
     })
 }
@@ -111,11 +92,6 @@ mod tests {
         let report = boot_cartridge(cartridge_dir, saves_dir).expect("sample should boot");
 
         assert_eq!(report.manifest.id, "com.vcon.sample_game");
-        assert!(report.lifecycle.on_boot);
-        assert!(report.lifecycle.on_update);
-        assert!(report.lifecycle.on_render);
-        assert!(report.lifecycle.on_event);
-        assert!(report.lifecycle.on_shutdown);
         assert_eq!(report.save_namespace.quota_mb, 16);
     }
 
@@ -132,7 +108,7 @@ mod tests {
 name = "Bad"
 version = "0.1.0"
 entrypoint = "src/main.py"
-sdk_version = "1"
+sdk_version = "2"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["network"]
@@ -161,7 +137,7 @@ permissions = ["network"]
 name = "Bad SDK"
 version = "0.1.0"
 entrypoint = "src/main.py"
-sdk_version = "2"
+sdk_version = "1"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["storage"]
@@ -173,7 +149,7 @@ permissions = ["storage"]
         let err = boot_cartridge(root, Path::new("/tmp/vcon-test-saves"))
             .expect_err("unsupported sdk should fail");
         assert!(err.to_string().contains("sdk_version"));
-        assert!(err.to_string().contains("must be `1`"));
+        assert!(err.to_string().contains("must be `2`"));
 
         let _ = fs::remove_dir_all(root);
     }

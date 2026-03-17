@@ -77,7 +77,7 @@ mod tests {
             name: "Demo".to_owned(),
             version: "0.1.0".to_owned(),
             entrypoint: "src/main.py".to_owned(),
-            sdk_version: "1".to_owned(),
+            sdk_version: "2".to_owned(),
             assets_path: "assets".to_owned(),
             save_quota_mb: 8,
             permissions: vec!["storage".to_owned()],

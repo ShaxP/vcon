@@ -10,7 +10,7 @@ pub mod scene;
 pub mod storage;
 
 pub use audio::{ActiveVoice, AudioMixer, PlayRequest};
-pub use host::{boot_cartridge, BootReport, EngineError, LifecycleAvailability};
+pub use host::{boot_cartridge, BootReport, EngineError};
 pub use input::{scripted_input_frame, scripted_input_frame_seeded, InputFrame, InputSource};
 pub use input_mapping::{map_gamepad_state, InputProfile, RawGamepadState};
 pub use manifest::Manifest;

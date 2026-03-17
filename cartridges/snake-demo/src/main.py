@@ -534,28 +534,28 @@ class SnakeGame:
                 color=(220, 230, 240, 255),
             )
 
-game = SnakeGame()
+class SnakeDemo(vcon.Game):
+    def __init__(self):
+        self.game = SnakeGame()
+
+    def on_boot(self):
+        self.game.reset()
+        print(f"Snake demo render backend: {vcon.graphics.render_backend()}")
+        return None
+
+    def on_update(self, dt_fixed):
+        self.game.update(dt_fixed)
+        return None
+
+    def on_render(self, alpha):
+        self.game.render()
+        return None
+
+    def on_event(self, event):
+        return None
+
+    def on_shutdown(self):
+        return None
 
 
-def on_boot():
-    game.reset()
-    print(f"Snake demo render backend: {vcon.graphics.render_backend()}")
-    return None
-
-
-def on_update(dt_fixed):
-    game.update(dt_fixed)
-    return None
-
-
-def on_render(_):
-    game.render()
-    return None
-
-
-def on_event(_):
-    return None
-
-
-def on_shutdown():
-    return None
+cartridge = vcon.Cartridge(SnakeDemo())

@@ -17,7 +17,7 @@ fn write_valid_manifest(root: &Path) {
 name = "Test"
 version = "0.1.0"
 entrypoint = "src/main.py"
-sdk_version = "1"
+sdk_version = "2"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["storage"]
@@ -58,7 +58,7 @@ fn validate_rejects_unsupported_sdk_version() {
 name = "Bad SDK"
 version = "0.1.0"
 entrypoint = "src/main.py"
-sdk_version = "2"
+sdk_version = "1"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["storage"]
@@ -128,7 +128,7 @@ fn validate_reports_manifest_line_context() {
 name = "Broken
 version = "0.1.0"
 entrypoint = "src/main.py"
-sdk_version = "1"
+sdk_version = "2"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["storage"]

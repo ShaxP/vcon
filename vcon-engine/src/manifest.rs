@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-pub const SUPPORTED_SDK_VERSION: &str = "1";
+pub const SUPPORTED_SDK_VERSION: &str = "2";
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Manifest {
@@ -99,7 +99,7 @@ id = "com.example.demo"
 name = "Demo"
 version = "0.1.0"
 entrypoint = "src/main.py"
-sdk_version = "1"
+sdk_version = "2"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["storage"]
@@ -116,7 +116,7 @@ permissions = ["storage"]
 name = "Demo"
 version = "0.1.0"
 entrypoint = "src/main.py"
-sdk_version = "1"
+sdk_version = "2"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["storage"]
@@ -133,7 +133,7 @@ id = "com.example.demo"
 name = "Demo"
 version = "0.1.0"
 entrypoint = "src/main.txt"
-sdk_version = "1"
+sdk_version = "2"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["storage"]
@@ -150,7 +150,7 @@ id = "com.example.demo"
 name = "Demo"
 version = "0.1.0"
 entrypoint = "src/main.py"
-sdk_version = "2"
+sdk_version = "1"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["storage"]
@@ -160,6 +160,6 @@ permissions = ["storage"]
         let err = manifest
             .validate_sdk_version_compatibility()
             .expect_err("sdk version should be gated");
-        assert!(err.to_string().contains("must be `1`"));
+        assert!(err.to_string().contains("must be `2`"));
     }
 }

@@ -1,32 +1,31 @@
-# VCON SDK V1 Reference
+# VCON SDK V2 Reference
 
-Supported manifest `sdk_version`: `1`
+Supported manifest `sdk_version`: `2`
 
-## Lifecycle callbacks
+## Cartridge contract
 
 ```python
 import vcon
 
 
-def on_boot():
-    pass
+class MyGame(vcon.Game):
+    def on_boot(self):
+        pass
 
+    def on_update(self, dt_fixed: float):
+        pass
 
-def on_update(dt_fixed: float):
-    pass
+    def on_render(self, alpha: float):
+        pass
 
+    def on_event(self, event: dict):
+        # collision events use: {"type": "physics.collision", "a": str, "b": str}
+        pass
 
-def on_render(alpha: float):
-    pass
+    def on_shutdown(self):
+        pass
 
-
-def on_event(event: dict):
-    # collision events use: {"type": "physics.collision", "a": str, "b": str}
-    pass
-
-
-def on_shutdown():
-    pass
+cartridge = vcon.Cartridge(MyGame())
 ```
 
 ## Input

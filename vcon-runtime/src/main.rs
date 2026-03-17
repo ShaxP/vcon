@@ -71,12 +71,7 @@ fn main() -> Result<()> {
         report.manifest.name, report.manifest.id
     );
     println!("Entrypoint: {}", report.entrypoint_path.display());
-    println!("Lifecycle availability:");
-    println!("  on_boot: {}", report.lifecycle.on_boot);
-    println!("  on_update: {}", report.lifecycle.on_update);
-    println!("  on_render: {}", report.lifecycle.on_render);
-    println!("  on_event: {}", report.lifecycle.on_event);
-    println!("  on_shutdown: {}", report.lifecycle.on_shutdown);
+    println!("Entrypoint API: module-level `cartridge` object");
     println!("Save namespace: {}", report.save_namespace.root.display());
     println!("Save quota: {} MB", report.save_namespace.quota_mb);
 

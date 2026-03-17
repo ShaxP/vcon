@@ -231,8 +231,10 @@ pub fn run_cartridge_with_loop(
             &module_name,
         )
         .context("failed to compile cartridge entrypoint")?;
+        let cartridge = load_cartridge(&module)?;
 
-        let on_boot_called = call_if_present0(&module, "on_boot")?;
+        call_cartridge0(&cartridge, "on_boot")?;
+        let on_boot_called = true;
 
         let mut on_update_calls = 0;
         let mut on_render_calls = 0;
@@ -265,9 +267,8 @@ pub fn run_cartridge_with_loop(
             let input_frame = input_provider.next_frame(frame_idx);
             inject_input_state(py, &input_frame)?;
 
-            if call_if_present1_f64(&module, "on_update", dt_fixed)? {
-                on_update_calls += 1;
-            }
+            call_cartridge1_f64(&cartridge, "on_update", dt_fixed)?;
+            on_update_calls += 1;
 
             let physics_input = read_physics_sync_state(py)?;
             synchronize_physics(&mut physics, &physics_input)?;
@@ -275,9 +276,8 @@ pub fn run_cartridge_with_loop(
             publish_physics_runtime_state(py, &physics)?;
             physics_events_dispatched += collisions.len() as u32;
             for event in collisions {
-                if call_if_present1_event(&module, "on_event", &event)? {
-                    on_event_calls += 1;
-                }
+                call_cartridge1_event(&cartridge, "on_event", &event)?;
+                on_event_calls += 1;
             }
 
             let audio_commands = read_audio_runtime_commands(py)?;
@@ -287,9 +287,8 @@ pub fn run_cartridge_with_loop(
             publish_audio_runtime_state(py, &active_voices, &audio.device.health())?;
 
             begin_render_frame(py)?;
-            if call_if_present1_f64(&module, "on_render", 1.0)? {
-                on_render_calls += 1;
-            }
+            call_cartridge1_f64(&cartridge, "on_render", 1.0)?;
+            on_render_calls += 1;
             let frame_commands = drain_and_validate_render_commands(py)?;
             draw_commands_submitted += frame_commands.commands.len() as u32;
 
@@ -329,7 +328,8 @@ pub fn run_cartridge_with_loop(
             executor.dump_ppm(path)?;
         }
 
-        let on_shutdown_called = call_if_present0(&module, "on_shutdown")?;
+        call_cartridge0(&cartridge, "on_shutdown")?;
+        let on_shutdown_called = true;
         let audio_health = audio.device.health();
 
         Ok(RuntimeInvocationReport {
@@ -935,59 +935,66 @@ fn extract_color(dict: &Bound<'_, PyDict>, key: &str) -> Result<[u8; 4]> {
     Ok([tuple.0, tuple.1, tuple.2, tuple.3])
 }
 
-fn call_if_present0(module: &Bound<'_, PyModule>, callback: &str) -> Result<bool> {
-    if let Ok(function) = module.getattr(callback) {
-        if function.is_callable() {
-            function
-                .call0()
-                .with_context(|| format!("lifecycle callback `{callback}()` failed"))?;
-            return Ok(true);
+fn load_cartridge<'py>(module: &'py Bound<'py, PyModule>) -> Result<Bound<'py, PyAny>> {
+    let cartridge = module
+        .getattr("cartridge")
+        .context("python entrypoint must define a module-level `cartridge` object")?;
+
+    for callback in [
+        "on_boot",
+        "on_update",
+        "on_render",
+        "on_event",
+        "on_shutdown",
+    ] {
+        let function = cartridge.getattr(callback).with_context(|| {
+            format!("`cartridge` is missing required lifecycle method `{callback}`")
+        })?;
+        if !function.is_callable() {
+            return Err(anyhow!(
+                "`cartridge.{callback}` must be a callable lifecycle method"
+            ));
         }
     }
 
-    Ok(false)
+    Ok(cartridge)
 }
 
-fn call_if_present1_f64(module: &Bound<'_, PyModule>, callback: &str, value: f64) -> Result<bool> {
-    if let Ok(function) = module.getattr(callback) {
-        if function.is_callable() {
-            function
-                .call1((value,))
-                .with_context(|| format!("lifecycle callback `{callback}(...)` failed"))?;
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
+fn call_cartridge0(cartridge: &Bound<'_, PyAny>, callback: &str) -> Result<()> {
+    cartridge
+        .call_method0(callback)
+        .with_context(|| format!("cartridge lifecycle method `{callback}()` failed"))?;
+    Ok(())
 }
 
-fn call_if_present1_event(
-    module: &Bound<'_, PyModule>,
+fn call_cartridge1_f64(cartridge: &Bound<'_, PyAny>, callback: &str, value: f64) -> Result<()> {
+    cartridge
+        .call_method1(callback, (value,))
+        .with_context(|| format!("cartridge lifecycle method `{callback}(...)` failed"))?;
+    Ok(())
+}
+
+fn call_cartridge1_event(
+    cartridge: &Bound<'_, PyAny>,
     callback: &str,
     event: &PyPhysicsEvent,
-) -> Result<bool> {
-    if let Ok(function) = module.getattr(callback) {
-        if function.is_callable() {
-            let py = module.py();
-            let payload = PyDict::new_bound(py);
-            payload
-                .set_item("type", "physics.collision")
-                .context("failed to set event type")?;
-            payload
-                .set_item("a", event.a.as_str())
-                .context("failed to set event a")?;
-            payload
-                .set_item("b", event.b.as_str())
-                .context("failed to set event b")?;
+) -> Result<()> {
+    let py = cartridge.py();
+    let payload = PyDict::new_bound(py);
+    payload
+        .set_item("type", "physics.collision")
+        .context("failed to set event type")?;
+    payload
+        .set_item("a", event.a.as_str())
+        .context("failed to set event a")?;
+    payload
+        .set_item("b", event.b.as_str())
+        .context("failed to set event b")?;
 
-            function
-                .call1((payload,))
-                .with_context(|| format!("lifecycle callback `{callback}(event)` failed"))?;
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
+    cartridge
+        .call_method1(callback, (payload,))
+        .with_context(|| format!("cartridge lifecycle method `{callback}(event)` failed"))?;
+    Ok(())
 }
 
 fn install_runtime_guards(py: Python<'_>, cartridge_root: &Path) -> Result<()> {
@@ -1223,6 +1230,47 @@ def on_boot():
         let msg = format!("{err:#}");
         assert!(
             msg.contains("outside SDK-facing APIs") && msg.contains("random"),
+            "unexpected error: {msg}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&save_root);
+    }
+
+    #[test]
+    fn rejects_entrypoint_without_module_level_cartridge() {
+        let (root, entrypoint) = write_temp_entrypoint(
+            r#"
+import vcon
+
+
+class MissingCartridge(vcon.Game):
+    pass
+"#,
+        );
+        let save_root = std::env::temp_dir().join("vcon-runtime-save-test-missing-cartridge");
+        let _ = fs::remove_dir_all(&save_root);
+        let mut provider = ScriptedInputProvider::default();
+
+        let result = run_cartridge(
+            &entrypoint,
+            &root,
+            Path::new("../vcon-sdk"),
+            1,
+            1.0 / 60.0,
+            1280,
+            800,
+            &mut provider,
+            &save_root,
+            8,
+            None,
+            None,
+            ActiveRenderBackend::Software,
+        );
+        let err = result.expect_err("missing cartridge should fail");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("module-level `cartridge` object"),
             "unexpected error: {msg}"
         );
 

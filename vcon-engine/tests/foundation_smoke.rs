@@ -13,11 +13,6 @@ fn boots_sample_cartridge_from_workspace() {
     let report = boot_cartridge(&cartridge_dir, &saves_root).expect("sample cartridge should boot");
 
     assert_eq!(report.manifest.id, "com.vcon.sample_game");
-    assert!(report.lifecycle.on_boot);
-    assert!(report.lifecycle.on_update);
-    assert!(report.lifecycle.on_render);
-    assert!(report.lifecycle.on_event);
-    assert!(report.lifecycle.on_shutdown);
 }
 
 #[test]
@@ -32,7 +27,7 @@ fn rejects_manifest_with_blocked_network_permission() {
 name = "Bad"
 version = "0.1.0"
 entrypoint = "src/main.py"
-sdk_version = "1"
+sdk_version = "2"
 assets_path = "assets"
 save_quota_mb = 8
 permissions = ["network"]

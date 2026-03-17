@@ -1,11 +1,9 @@
 """VCON SDK package for object-oriented cartridge entrypoints."""
 
-from abc import ABC
-
 from . import audio, graphics, input, physics, save
 
 
-class Game(ABC):
+class Game:
     """Base game contract for cartridges."""
 
     def on_boot(self):

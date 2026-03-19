@@ -81,30 +81,62 @@ class Snake:
         return 1.0 / max(1, self.speed_cells_per_second)
 
 
-class SnakeGame:
+class GameContext:
     def __init__(self):
         self.rng = DeterministicRng(INITIAL_SEED)
         self.best_score = 0
         self.frame_count = 0
         self.fps_instant = 0.0
         self.fps_smoothed = 0.0
-        self.reset()
 
-    def reset(self) -> None:
+        self.snake = None
+        self.food_position = (0, 0)
+        self.score = 0
+        self.accumulated_time = 0.0
+
+        self._was_a_pressed = False
+        self._was_start_pressed = False
+        self._was_pause_pressed = False
+        self._restart_pressed = False
+        self._pause_toggled = False
+
+        self.reset_run()
+
+    def reset_run(self) -> None:
         center_x = GRID_COLUMNS // 2
         center_y = GRID_ROWS // 2
         self.snake = Snake(center_x, center_y)
         self.food_position = (0, 0)
         self.score = 0
         self.accumulated_time = 0.0
-        self.game_over = False
-        self.paused = False
-
-        self.was_a_pressed = False
-        self.was_start_pressed = False
-        self.was_pause_pressed = False
-
         self.spawn_food()
+
+    def begin_frame(self, dt_seconds: float) -> None:
+        self.frame_count += 1
+        self.fps_instant = 1.0 / max(dt_seconds, 1e-6)
+        if self.fps_smoothed <= 0.0:
+            self.fps_smoothed = self.fps_instant
+        else:
+            self.fps_smoothed = (self.fps_smoothed * 0.9) + (self.fps_instant * 0.1)
+
+        is_a_pressed = vcon.input.action_pressed("A")
+        is_start_pressed = vcon.input.action_pressed("Start")
+        is_pause_pressed = vcon.input.action_pressed("Pause")
+
+        self._restart_pressed = (is_a_pressed and not self._was_a_pressed) or (
+            is_start_pressed and not self._was_start_pressed
+        )
+        self._pause_toggled = is_pause_pressed and not self._was_pause_pressed
+
+        self._was_a_pressed = is_a_pressed
+        self._was_start_pressed = is_start_pressed
+        self._was_pause_pressed = is_pause_pressed
+
+    def restart_pressed(self) -> bool:
+        return self._restart_pressed
+
+    def pause_toggled(self) -> bool:
+        return self._pause_toggled
 
     def spawn_food(self) -> None:
         occupied_cells = set(self.snake.body)
@@ -130,19 +162,15 @@ class SnakeGame:
         x, y = position
         return x < 0 or x >= GRID_COLUMNS or y < 0 or y >= GRID_ROWS
 
-    def step(self) -> None:
-        if self.game_over:
-            return
-
+    def step_snake(self) -> bool:
         self.snake.prepare_move()
         next_head = self.snake.next_head_position()
 
         hit_boundary = self.is_out_of_bounds(next_head)
         hit_self = next_head in self.snake.body
         if hit_boundary or hit_self:
-            self.game_over = True
             self.best_score = max(self.best_score, self.score)
-            return
+            return False
 
         ate_food = next_head == self.food_position
         self.snake.move_forward(next_head, grew=ate_food)
@@ -153,44 +181,7 @@ class SnakeGame:
             self.snake.increase_speed()
             self.spawn_food()
 
-    def update(self, dt_seconds: float) -> None:
-        self.frame_count += 1
-        self.fps_instant = 1.0 / max(dt_seconds, 1e-6)
-        if self.fps_smoothed <= 0.0:
-            self.fps_smoothed = self.fps_instant
-        else:
-            self.fps_smoothed = (self.fps_smoothed * 0.9) + (self.fps_instant * 0.1)
-
-        desired_direction = self.read_desired_direction()
-        self.snake.queue_direction(desired_direction)
-
-        is_a_pressed = vcon.input.action_pressed("A")
-        is_start_pressed = vcon.input.action_pressed("Start")
-        is_pause_pressed = vcon.input.action_pressed("Pause")
-
-        restart_pressed = (is_a_pressed and not self.was_a_pressed) or (
-            is_start_pressed and not self.was_start_pressed
-        )
-        pause_toggled = is_pause_pressed and not self.was_pause_pressed
-
-        self.was_a_pressed = is_a_pressed
-        self.was_start_pressed = is_start_pressed
-        self.was_pause_pressed = is_pause_pressed
-
-        if pause_toggled and not self.game_over:
-            self.paused = not self.paused
-
-        if self.game_over and restart_pressed:
-            self.reset()
-            return
-
-        if self.paused:
-            return
-
-        self.accumulated_time += dt_seconds
-        while self.accumulated_time >= self.snake.move_interval_seconds:
-            self.accumulated_time -= self.snake.move_interval_seconds
-            self.step()
+        return True
 
     def compute_layout(self) -> Layout:
         surface_width, surface_height = vcon.graphics.surface_size()
@@ -300,7 +291,7 @@ class SnakeGame:
                 filled=True,
             )
 
-    def render(self) -> None:
+    def render_world(self) -> None:
         layout = self.compute_layout()
 
         vcon.graphics.clear((10, 14, 20, 255))
@@ -384,6 +375,9 @@ class SnakeGame:
             )
 
             if is_bend:
+                if to_next is None:
+                    continue
+
                 center_x = draw_x + (layout.cell_size * 0.5)
                 center_y = draw_y + (layout.cell_size * 0.5)
                 core_size = layout.cell_size * 0.68
@@ -474,84 +468,192 @@ class SnakeGame:
             color=(180, 200, 210, 255),
         )
 
-        if self.game_over:
-            panel_width = min(440, max(300, int(layout.board_width * 0.42)))
-            panel_height = min(140, max(110, int(layout.board_height * 0.20)))
-            panel_x = layout.board_x + (layout.board_width - panel_width) / 2.0
-            panel_y = layout.board_y + (layout.board_height - panel_height) / 2.0
-            vcon.graphics.rect(panel_x, panel_y, panel_width, panel_height, (0, 0, 0, 200), filled=True)
-            vcon.graphics.rect(
-                panel_x,
-                panel_y,
-                panel_width,
-                panel_height,
-                (220, 100, 90, 255),
-                filled=False,
-                thickness=2.0,
-            )
-            vcon.graphics.text(
-                "GAME OVER",
-                panel_x + 72,
-                panel_y + 24,
-                size=28,
-                color=(255, 210, 210, 255),
-            )
-            vcon.graphics.text(
-                "Press Space or Enter to restart",
-                panel_x + 28,
-                panel_y + panel_height - 44,
-                size=18,
-                color=(240, 240, 240, 255),
-            )
+    def render_game_over_overlay(self) -> None:
+        layout = self.compute_layout()
+        panel_width = min(440, max(300, int(layout.board_width * 0.42)))
+        panel_height = min(140, max(110, int(layout.board_height * 0.20)))
+        panel_x = layout.board_x + (layout.board_width - panel_width) / 2.0
+        panel_y = layout.board_y + (layout.board_height - panel_height) / 2.0
+        vcon.graphics.rect(panel_x, panel_y, panel_width, panel_height, (0, 0, 0, 200), filled=True)
+        vcon.graphics.rect(
+            panel_x,
+            panel_y,
+            panel_width,
+            panel_height,
+            (220, 100, 90, 255),
+            filled=False,
+            thickness=2.0,
+        )
+        vcon.graphics.text(
+            "GAME OVER",
+            panel_x + 72,
+            panel_y + 24,
+            size=28,
+            color=(255, 210, 210, 255),
+        )
+        vcon.graphics.text(
+            "Press Space or Enter to restart",
+            panel_x + 28,
+            panel_y + panel_height - 44,
+            size=18,
+            color=(240, 240, 240, 255),
+        )
 
-        if self.paused and not self.game_over:
-            panel_width = min(320, max(220, int(layout.board_width * 0.30)))
-            panel_height = min(112, max(88, int(layout.board_height * 0.15)))
-            panel_x = layout.board_x + (layout.board_width - panel_width) / 2.0
-            panel_y = layout.board_y + (layout.board_height - panel_height) / 2.0
-            vcon.graphics.rect(panel_x, panel_y, panel_width, panel_height, (0, 0, 0, 200), filled=True)
-            vcon.graphics.rect(
-                panel_x,
-                panel_y,
-                panel_width,
-                panel_height,
-                (90, 170, 230, 255),
-                filled=False,
-                thickness=2.0,
-            )
-            vcon.graphics.text(
-                "PAUSED",
-                panel_x + 56,
-                panel_y + 20,
-                size=30,
-                color=(220, 240, 255, 255),
-            )
-            vcon.graphics.text(
-                "Press P to resume",
-                panel_x + 30,
-                panel_y + panel_height - 34,
-                size=16,
-                color=(220, 230, 240, 255),
-            )
+    def render_paused_overlay(self) -> None:
+        layout = self.compute_layout()
+        panel_width = min(320, max(220, int(layout.board_width * 0.30)))
+        panel_height = min(112, max(88, int(layout.board_height * 0.15)))
+        panel_x = layout.board_x + (layout.board_width - panel_width) / 2.0
+        panel_y = layout.board_y + (layout.board_height - panel_height) / 2.0
+        vcon.graphics.rect(panel_x, panel_y, panel_width, panel_height, (0, 0, 0, 200), filled=True)
+        vcon.graphics.rect(
+            panel_x,
+            panel_y,
+            panel_width,
+            panel_height,
+            (90, 170, 230, 255),
+            filled=False,
+            thickness=2.0,
+        )
+        vcon.graphics.text(
+            "PAUSED",
+            panel_x + 56,
+            panel_y + 20,
+            size=30,
+            color=(220, 240, 255, 255),
+        )
+        vcon.graphics.text(
+            "Press P to resume",
+            panel_x + 30,
+            panel_y + panel_height - 34,
+            size=16,
+            color=(220, 230, 240, 255),
+        )
+
+
+class State:
+    name = "state"
+
+    def __init__(self, context: GameContext, machine):
+        self.context = context
+        self.machine = machine
+
+    def enter(self, previous_state_name=None):
+        return None
+
+    def exit(self, next_state_name=None):
+        return None
+
+    def update(self, dt_seconds: float):
+        return None
+
+    def render(self, alpha: float):
+        return None
+
+    def on_event(self, event):
+        return None
+
+
+class StateMachine:
+    def __init__(self, context: GameContext):
+        self.context = context
+        self.current_state : State | None = None
+        self.current_state_name : str | None = None
+
+    def change_state(self, next_state: State | None) -> None:
+        previous_state_name = self.current_state_name
+        if self.current_state is not None:
+            self.current_state.exit(next_state.name if next_state is not None else None)
+        self.current_state = next_state
+        self.current_state_name = next_state.name if next_state is not None else None
+        if self.current_state is not None:
+            self.current_state.enter(previous_state_name)
+
+    def update(self, dt_seconds: float) -> None:
+        if self.current_state is None:
+            return
+        self.context.begin_frame(dt_seconds)
+        self.current_state.update(dt_seconds)
+
+    def render(self, alpha: float) -> None:
+        if self.current_state is None:
+            return
+        self.current_state.render(alpha)
+
+    def on_event(self, event) -> None:
+        if self.current_state is None:
+            return
+        self.current_state.on_event(event)
+
+
+class PlayingState(State):
+    name = "playing"
+
+    def update(self, dt_seconds: float):
+        desired_direction = self.context.read_desired_direction()
+        self.context.snake.queue_direction(desired_direction)
+
+        if self.context.pause_toggled():
+            self.machine.change_state(PausedState(self.context, self.machine))
+            return
+
+        self.context.accumulated_time += dt_seconds
+        while self.context.accumulated_time >= self.context.snake.move_interval_seconds:
+            self.context.accumulated_time -= self.context.snake.move_interval_seconds
+            if not self.context.step_snake():
+                self.machine.change_state(GameOverState(self.context, self.machine))
+                return
+
+    def render(self, alpha: float):
+        self.context.render_world()
+
+
+class PausedState(State):
+    name = "paused"
+
+    def update(self, dt_seconds: float):
+        if self.context.pause_toggled():
+            self.machine.change_state(PlayingState(self.context, self.machine))
+
+    def render(self, alpha: float):
+        self.context.render_world()
+        self.context.render_paused_overlay()
+
+
+class GameOverState(State):
+    name = "game_over"
+
+    def update(self, dt_seconds: float):
+        if self.context.restart_pressed():
+            self.context.reset_run()
+            self.machine.change_state(PlayingState(self.context, self.machine))
+
+    def render(self, alpha: float):
+        self.context.render_world()
+        self.context.render_game_over_overlay()
+
 
 class SnakeDemo(vcon.Game):
     def __init__(self):
-        self.game = SnakeGame()
+        self.context = GameContext()
+        self.machine = StateMachine(self.context)
 
     def on_boot(self):
-        self.game.reset()
+        self.context.reset_run()
+        self.machine.change_state(PlayingState(self.context, self.machine))
         print(f"Snake demo render backend: {vcon.graphics.render_backend()}")
         return None
 
     def on_update(self, dt_fixed):
-        self.game.update(dt_fixed)
+        self.machine.update(dt_fixed)
         return None
 
     def on_render(self, alpha):
-        self.game.render()
+        self.machine.render(alpha)
         return None
 
     def on_event(self, event):
+        self.machine.on_event(event)
         return None
 
     def on_shutdown(self):

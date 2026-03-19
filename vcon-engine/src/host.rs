@@ -39,7 +39,7 @@ pub fn boot_cartridge(cartridge_dir: &Path, saves_root: &Path) -> Result<BootRep
             source,
         })?;
 
-    let import_violations = scan_entrypoint_source(&entrypoint_source);
+    let import_violations = scan_entrypoint_source(&entrypoint_source, &entrypoint_path);
     if !import_violations.is_empty() {
         let messages = import_violations
             .iter()

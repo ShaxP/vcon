@@ -51,3 +51,11 @@ cartridge = vcon.Cartridge(MyGame())
 - `vcon.audio.stop_all()`
 - `vcon.audio.active_voices() -> list[dict]`
 - `vcon.audio.health() -> dict`
+
+## FSM
+- `vcon.fsm.State(context, machine)`
+- `vcon.fsm.StateMachine(context)`
+- `StateMachine.change_state(next_state)`
+- `StateMachine.update(dt_seconds)`
+- `StateMachine.render(alpha)`
+- `StateMachine.on_event(event)`

@@ -2,7 +2,7 @@
 
 from abc import ABC
 
-from . import audio, graphics, input, physics, save
+from . import audio, fsm, graphics, input, physics, save
 
 
 class Game(ABC):
@@ -46,4 +46,4 @@ class Cartridge:
         return self.game.on_shutdown()
 
 
-__all__ = ["Cartridge", "Game", "audio", "graphics", "input", "physics", "save"]
+__all__ = ["Cartridge", "Game", "audio", "fsm", "graphics", "input", "physics", "save"]

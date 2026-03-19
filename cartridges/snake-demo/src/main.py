@@ -531,62 +531,7 @@ class GameContext:
         )
 
 
-class State:
-    name = "state"
-
-    def __init__(self, context: GameContext, machine):
-        self.context = context
-        self.machine = machine
-
-    def enter(self, previous_state_name=None):
-        return None
-
-    def exit(self, next_state_name=None):
-        return None
-
-    def update(self, dt_seconds: float):
-        return None
-
-    def render(self, alpha: float):
-        return None
-
-    def on_event(self, event):
-        return None
-
-
-class StateMachine:
-    def __init__(self, context: GameContext):
-        self.context = context
-        self.current_state : State | None = None
-        self.current_state_name : str | None = None
-
-    def change_state(self, next_state: State | None) -> None:
-        previous_state_name = self.current_state_name
-        if self.current_state is not None:
-            self.current_state.exit(next_state.name if next_state is not None else None)
-        self.current_state = next_state
-        self.current_state_name = next_state.name if next_state is not None else None
-        if self.current_state is not None:
-            self.current_state.enter(previous_state_name)
-
-    def update(self, dt_seconds: float) -> None:
-        if self.current_state is None:
-            return
-        self.context.begin_frame(dt_seconds)
-        self.current_state.update(dt_seconds)
-
-    def render(self, alpha: float) -> None:
-        if self.current_state is None:
-            return
-        self.current_state.render(alpha)
-
-    def on_event(self, event) -> None:
-        if self.current_state is None:
-            return
-        self.current_state.on_event(event)
-
-
-class PlayingState(State):
+class PlayingState(vcon.fsm.State):
     name = "playing"
 
     def update(self, dt_seconds: float):
@@ -608,7 +553,7 @@ class PlayingState(State):
         self.context.render_world()
 
 
-class PausedState(State):
+class PausedState(vcon.fsm.State):
     name = "paused"
 
     def update(self, dt_seconds: float):
@@ -620,7 +565,7 @@ class PausedState(State):
         self.context.render_paused_overlay()
 
 
-class GameOverState(State):
+class GameOverState(vcon.fsm.State):
     name = "game_over"
 
     def update(self, dt_seconds: float):
@@ -636,7 +581,7 @@ class GameOverState(State):
 class SnakeDemo(vcon.Game):
     def __init__(self):
         self.context = GameContext()
-        self.machine = StateMachine(self.context)
+        self.machine = vcon.fsm.StateMachine(self.context)
 
     def on_boot(self):
         self.context.reset_run()
@@ -645,6 +590,7 @@ class SnakeDemo(vcon.Game):
         return None
 
     def on_update(self, dt_fixed):
+        self.context.begin_frame(dt_fixed)
         self.machine.update(dt_fixed)
         return None
 

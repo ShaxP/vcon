@@ -212,7 +212,7 @@ pub fn run_cartridge_with_loop(
     };
 
     Python::with_gil(|py| {
-        extend_sys_path(py, cartridge_root, sdk_root)?;
+        extend_sys_path(py, entrypoint_path, cartridge_root, sdk_root)?;
         install_runtime_guards(py, cartridge_root)?;
         configure_save_api(py, save_root, save_quota_mb)?;
         configure_physics_api(py)?;
@@ -1021,6 +1021,7 @@ fn build_sandbox_guard_source(cartridge_root: &Path) -> Result<String> {
         r#"
 import builtins
 import os
+import sys
 
 _ALLOWED_ROOTS = {{"vcon"}}
 _BLOCKED_NETWORK_ROOTS = {{"socket", "urllib", "http", "requests", "asyncio"}}
@@ -1044,6 +1045,39 @@ def _is_cartridge_context(globals_dict):
     return normalized == _CARTRIDGE_ROOT or normalized.startswith(_CARTRIDGE_ROOT + os.sep)
 
 
+def _is_within_cartridge(path):
+    if not path:
+        return False
+    normalized = os.path.normpath(os.path.realpath(str(path)))
+    return normalized == _CARTRIDGE_ROOT or normalized.startswith(_CARTRIDGE_ROOT + os.sep)
+
+
+def _resolves_within_cartridge(name, globals_dict):
+    if not name:
+        return False
+
+    root = name.split(".", 1)[0]
+    module_file = globals_dict.get("__file__", "") if globals_dict else ""
+    importer_dir = os.path.dirname(os.path.normpath(str(module_file))) if module_file else ""
+
+    candidate_roots = []
+    if importer_dir:
+        candidate_roots.append(importer_dir)
+    candidate_roots.extend(sys.path)
+
+    for base_dir in candidate_roots:
+        if not _is_within_cartridge(base_dir):
+            continue
+
+        module_path = os.path.join(os.path.realpath(str(base_dir)), root)
+        if os.path.isfile(module_path + ".py"):
+            return True
+        if os.path.isfile(os.path.join(module_path, "__init__.py")):
+            return True
+
+    return False
+
+
 if not getattr(builtins, "__vcon_guard_installed__", False):
     _real_import = builtins.__import__
 
@@ -1056,7 +1090,7 @@ if not getattr(builtins, "__vcon_guard_installed__", False):
         if root in _BLOCKED_NETWORK_ROOTS:
             raise ImportError(f"vcon sandbox: blocked network module '{{root}}'")
 
-        if level == 0 and root not in _ALLOWED_ROOTS:
+        if level == 0 and root not in _ALLOWED_ROOTS and not _resolves_within_cartridge(name, globals):
             raise ImportError(
                 f"vcon sandbox: import '{{root}}' is outside SDK-facing APIs"
             )
@@ -1073,7 +1107,12 @@ fn python_single_quoted_literal(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
-fn extend_sys_path(py: Python<'_>, cartridge_root: &Path, sdk_root: &Path) -> Result<()> {
+fn extend_sys_path(
+    py: Python<'_>,
+    entrypoint_path: &Path,
+    cartridge_root: &Path,
+    sdk_root: &Path,
+) -> Result<()> {
     let sys = py.import_bound("sys").context("failed to import sys")?;
     let sys_path = sys
         .getattr("path")
@@ -1081,6 +1120,9 @@ fn extend_sys_path(py: Python<'_>, cartridge_root: &Path, sdk_root: &Path) -> Re
         .downcast_into::<PyList>()
         .map_err(|_| anyhow!("sys.path is not a list"))?;
 
+    if let Some(entrypoint_dir) = entrypoint_path.parent() {
+        prepend_unique(&sys_path, &entrypoint_dir.to_string_lossy())?;
+    }
     prepend_unique(&sys_path, &cartridge_root.to_string_lossy())?;
     prepend_unique(&sys_path, &sdk_root.to_string_lossy())?;
 
@@ -1238,6 +1280,99 @@ def on_boot():
     }
 
     #[test]
+    fn allows_local_module_import_within_cartridge() {
+        let (root, entrypoint) = write_temp_entrypoint_with_files(
+            r#"
+import vcon
+import helper
+
+
+class LocalImportGame(vcon.Game):
+    def on_boot(self):
+        print(helper.greeting())
+        return None
+
+
+cartridge = vcon.Cartridge(LocalImportGame())
+"#,
+            &[("src/helper.py", "def greeting():\n    return 'local helper ok'\n")],
+        );
+        let save_root = std::env::temp_dir().join("vcon-runtime-save-test-local-module");
+        let _ = fs::remove_dir_all(&save_root);
+        let mut provider = ScriptedInputProvider::default();
+
+        let report = run_cartridge(
+            &entrypoint,
+            &root,
+            Path::new("../vcon-sdk"),
+            1,
+            1.0 / 60.0,
+            1280,
+            800,
+            &mut provider,
+            &save_root,
+            8,
+            None,
+            None,
+            ActiveRenderBackend::Software,
+        )
+        .expect("local helper import should succeed");
+
+        assert!(report.on_boot_called);
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&save_root);
+    }
+
+    #[test]
+    fn allows_local_package_import_within_cartridge() {
+        let (root, entrypoint) = write_temp_entrypoint_with_files(
+            r#"
+import vcon
+from snake_demo.renderer import render_name
+
+
+class LocalPackageGame(vcon.Game):
+    def on_boot(self):
+        print(render_name())
+        return None
+
+
+cartridge = vcon.Cartridge(LocalPackageGame())
+"#,
+            &[
+                ("src/snake_demo/__init__.py", ""),
+                ("src/snake_demo/renderer.py", "def render_name():\n    return 'local package ok'\n"),
+            ],
+        );
+        let save_root = std::env::temp_dir().join("vcon-runtime-save-test-local-package");
+        let _ = fs::remove_dir_all(&save_root);
+        let mut provider = ScriptedInputProvider::default();
+
+        let report = run_cartridge(
+            &entrypoint,
+            &root,
+            Path::new("../vcon-sdk"),
+            1,
+            1.0 / 60.0,
+            1280,
+            800,
+            &mut provider,
+            &save_root,
+            8,
+            None,
+            None,
+            ActiveRenderBackend::Software,
+        )
+        .expect("local package import should succeed");
+
+        assert!(report.on_boot_called);
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&save_root);
+    }
+
+    #[test]
     fn rejects_entrypoint_without_module_level_cartridge() {
         let (root, entrypoint) = write_temp_entrypoint(
             r#"
@@ -1357,6 +1492,13 @@ imp("socket")
     }
 
     fn write_temp_entrypoint(source: &str) -> (PathBuf, PathBuf) {
+        write_temp_entrypoint_with_files(source, &[])
+    }
+
+    fn write_temp_entrypoint_with_files(
+        source: &str,
+        extra_files: &[(&str, &str)],
+    ) -> (PathBuf, PathBuf) {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after epoch")
@@ -1367,6 +1509,14 @@ imp("socket")
         fs::create_dir_all(&src).expect("temp src dir should be created");
         let entrypoint = src.join("main.py");
         fs::write(&entrypoint, source).expect("entrypoint should be written");
+
+        for (relative_path, file_source) in extra_files {
+            let file_path = root.join(relative_path);
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent).expect("temp file parent dir should be created");
+            }
+            fs::write(&file_path, file_source).expect("temp supporting file should be written");
+        }
 
         (root, entrypoint)
     }

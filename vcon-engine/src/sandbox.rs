@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::Manifest;
 
 const ALLOWED_IMPORT_ROOTS: &[&str] = &["vcon"];
@@ -40,8 +42,9 @@ pub fn validate_manifest_permissions(manifest: &Manifest) -> Vec<PolicyViolation
         .collect()
 }
 
-pub fn scan_entrypoint_source(source: &str) -> Vec<PolicyViolation> {
+pub fn scan_entrypoint_source(source: &str, entrypoint_path: &Path) -> Vec<PolicyViolation> {
     let mut violations = Vec::new();
+    let entrypoint_dir = entrypoint_path.parent();
 
     for module in extract_import_roots(source) {
         if NETWORK_IMPORT_ROOTS.contains(&module.as_str()) {
@@ -49,7 +52,9 @@ pub fn scan_entrypoint_source(source: &str) -> Vec<PolicyViolation> {
             continue;
         }
 
-        if !ALLOWED_IMPORT_ROOTS.contains(&module.as_str()) {
+        if !ALLOWED_IMPORT_ROOTS.contains(&module.as_str())
+            && !is_local_import_root(&module, entrypoint_dir)
+        {
             violations.push(PolicyViolation::ImportNotAllowed(module));
         }
     }
@@ -122,8 +127,21 @@ fn first_module_root(input: &str) -> String {
         .to_owned()
 }
 
+fn is_local_import_root(module: &str, entrypoint_dir: Option<&Path>) -> bool {
+    let Some(dir) = entrypoint_dir else {
+        return false;
+    };
+
+    let module_path = dir.join(module);
+    module_path.with_extension("py").is_file() || module_path.join("__init__.py").is_file()
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::{scan_entrypoint_source, validate_manifest_permissions, PolicyViolation};
     use crate::Manifest;
 
@@ -155,7 +173,7 @@ import socket
 from random import randint
 "#;
 
-        let violations = scan_entrypoint_source(source);
+        let violations = scan_entrypoint_source(source, Path::new("/tmp/demo/src/main.py"));
         assert_eq!(
             violations,
             vec![
@@ -172,8 +190,25 @@ import vcon
 from vcon import input
 "#;
 
-        let violations = scan_entrypoint_source(source);
+        let violations = scan_entrypoint_source(source, Path::new("/tmp/demo/src/main.py"));
         assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn allows_local_entrypoint_imports() {
+        let (entrypoint_path, root) = write_temp_entrypoint(
+            "import vcon\nimport app\nfrom helpers import world\n",
+            &[
+                ("app.py", "VALUE = 1\n"),
+                ("helpers/__init__.py", "world = 'ok'\n"),
+            ],
+        );
+
+        let source = fs::read_to_string(&entrypoint_path).expect("read entrypoint");
+        let violations = scan_entrypoint_source(&source, &entrypoint_path);
+        assert!(violations.is_empty());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -183,7 +218,7 @@ import vcon
 module = __import__("socket")
 "#;
 
-        let violations = scan_entrypoint_source(source);
+        let violations = scan_entrypoint_source(source, Path::new("/tmp/demo/src/main.py"));
         assert_eq!(
             violations,
             vec![PolicyViolation::DynamicImport("__import__".to_owned())]
@@ -200,7 +235,7 @@ payload = "im" + "port socket"
 exec(payload)
 "#;
 
-        let violations = scan_entrypoint_source(source);
+        let violations = scan_entrypoint_source(source, Path::new("/tmp/demo/src/main.py"));
         assert_eq!(
             violations,
             vec![
@@ -209,5 +244,27 @@ exec(payload)
                 PolicyViolation::DynamicImport("exec".to_owned()),
             ]
         );
+    }
+
+    fn write_temp_entrypoint(source: &str, extra_files: &[(&str, &str)]) -> (std::path::PathBuf, std::path::PathBuf) {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("vcon-sandbox-test-{stamp}"));
+        let src = root.join("src");
+        fs::create_dir_all(&src).expect("create src");
+        let entrypoint = src.join("main.py");
+        fs::write(&entrypoint, source).expect("write entrypoint");
+
+        for (relative_path, content) in extra_files {
+            let file_path = src.join(relative_path);
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent).expect("create parent");
+            }
+            fs::write(file_path, content).expect("write support file");
+        }
+
+        (entrypoint, root)
     }
 }

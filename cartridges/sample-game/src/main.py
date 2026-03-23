@@ -16,7 +16,6 @@ class SampleGame(vcon.Game):
         self.player_x = max(0.0, min(1200.0, self.player_x))
 
         self.boost = vcon.input.action_pressed("A")
-        return None
 
     def on_render(self, alpha):
         vcon.graphics.clear((12, 16, 28, 255))
@@ -40,7 +39,6 @@ class SampleGame(vcon.Game):
             size=20,
             color=(255, 210, 160, 255),
         )
-        return None
 
 
 cartridge = vcon.Cartridge(SampleGame())

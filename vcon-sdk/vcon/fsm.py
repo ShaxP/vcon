@@ -10,20 +10,20 @@ class State:
         self.context = context
         self.machine = machine
 
-    def enter(self, previous_state_name=None):
-        return None
+    def enter(self, previous_state_name=None) -> None:
+        pass
 
-    def exit(self, next_state_name=None):
-        return None
+    def exit(self, next_state_name=None) -> None:
+        pass
 
-    def update(self, dt_seconds: float):
-        return None
+    def update(self, dt_seconds: float) -> None:
+        pass
 
-    def render(self, alpha: float):
-        return None
+    def render(self, alpha: float) -> None:
+        pass
 
-    def on_event(self, event):
-        return None
+    def on_event(self, event) -> None:
+        pass
 
 
 class StateMachine:

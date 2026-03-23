@@ -9,20 +9,20 @@ import vcon
 
 
 class MyGame(vcon.Game):
-    def on_boot(self):
+    def on_boot(self) -> None:
         pass
 
-    def on_update(self, dt_fixed: float):
+    def on_update(self, dt_fixed: float) -> None:
         pass
 
-    def on_render(self, alpha: float):
+    def on_render(self, alpha: float) -> None:
         pass
 
-    def on_event(self, event: dict):
+    def on_event(self, event: dict) -> None:
         # collision events use: {"type": "physics.collision", "a": str, "b": str}
         pass
 
-    def on_shutdown(self):
+    def on_shutdown(self) -> None:
         pass
 
 cartridge = vcon.Cartridge(MyGame())

@@ -116,23 +116,19 @@ class SnakeDemo(vcon.Game):
         self.context.session.reset_run()
         self.machine.change_state(PlayingState(self.context, self.machine))
         print(f"Snake demo render backend: {vcon.graphics.render_backend()}")
-        return None
 
     def on_update(self, dt_fixed):
         self.context.begin_frame(dt_fixed)
         self.machine.update(dt_fixed)
-        return None
 
     def on_render(self, alpha):
         self.machine.render(alpha)
-        return None
 
     def on_event(self, event):
         self.machine.on_event(event)
-        return None
 
     def on_shutdown(self):
-        return None
+        pass
 
 
 cartridge = vcon.Cartridge(SnakeDemo())
